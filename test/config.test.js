@@ -48,11 +48,18 @@ test('booleans accept common spellings and reject nonsense', () => {
 });
 
 test('album ids must be UUIDs and entity ids must look like Home Assistant ids', () => {
-  const config = loadConfig({ IMMICH_ALBUM_IDS: ` ${ALBUM_ID} , `, HA_ENTITIES: 'light.kitchen, sensor.hall_temp' });
+  const config = loadConfig({ IMMICH_ALBUM_IDS: ` ${ALBUM_ID} , `, HA_ENTITIES: 'script.evening, cover.garage_door' });
   assert.deepEqual(config.immich.albumIds, [ALBUM_ID]);
-  assert.deepEqual(config.homeAssistant.entityIds, ['light.kitchen', 'sensor.hall_temp']);
+  assert.deepEqual(config.homeAssistant.includeIds, ['script.evening', 'cover.garage_door']);
   assert.throws(() => loadConfig({ IMMICH_ALBUM_IDS: 'my-album' }), /album id/);
   assert.throws(() => loadConfig({ HA_ENTITIES: 'Light.Kitchen' }), /entity id/);
+});
+
+test('HA_ENTITIES adds to the discovered entities, and HA_HIDE_ENTITIES removes some', () => {
+  const config = loadConfig({ HA_URL: 'http://ha.local:8123', HA_TOKEN: 't', HA_HIDE_ENTITIES: 'fan.bathroom' });
+  assert.deepEqual(config.homeAssistant.includeIds, []);
+  assert.deepEqual(config.homeAssistant.hideIds, ['fan.bathroom']);
+  assert.throws(() => loadConfig({ HA_HIDE_ENTITIES: 'not-an-entity' }), /HA_HIDE_ENTITIES|entity id/);
 });
 
 test('PHOTO_FIT only accepts the known modes', () => {

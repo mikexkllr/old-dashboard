@@ -1,6 +1,6 @@
 {
   "name": "old-dashboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Photo frame and Home Assistant controls for old iPads stuck on iOS 12, with photos from Immich.",
   "license": "MIT",
   "private": true,

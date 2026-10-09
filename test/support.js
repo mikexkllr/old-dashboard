@@ -107,10 +107,118 @@ export async function startImmich({
   return { ...mock, calls, close: () => closeServer(mock.server) };
 }
 
-/** A stand-in for Home Assistant. Flips on/off for toggle services, like a real device would. */
-export async function startHomeAssistant(states) {
+/** Builds a Home Assistant state object. */
+export function haState(entityId, state, attributes = {}) {
+  return {
+    entity_id: entityId,
+    state,
+    attributes,
+    last_changed: '2024-03-12T20:00:00+00:00',
+    last_updated: '2024-03-12T20:00:00+00:00',
+  };
+}
+
+/** Every entity type the dashboard has to cope with, including ones it must hide. */
+export function defaultHaStates() {
+  return [
+    haState('light.kitchen', 'off', { friendly_name: 'Kitchen light', supported_color_modes: ['brightness'] }),
+    haState('light.hall', 'on', { friendly_name: 'Hall lights', supported_color_modes: ['brightness'], brightness: 128 }),
+    haState('light.bedside', 'on', { friendly_name: 'Bedside lamp', supported_color_modes: ['onoff'] }),
+    haState('light.broken', 'unavailable', { friendly_name: 'Broken lamp', supported_color_modes: ['onoff'] }),
+    haState('switch.coffee', 'on', { friendly_name: 'Coffee machine' }),
+    haState('fan.bathroom', 'off', { friendly_name: 'Bathroom fan' }),
+    haState('input_boolean.guest_mode', 'off', { friendly_name: 'Guest mode' }),
+    haState('cover.living_room_blinds', 'closed', {
+      friendly_name: 'Living room blinds',
+      device_class: 'blind',
+      current_position: 0,
+    }),
+    haState('cover.garage_door', 'closed', { friendly_name: 'Garage door', device_class: 'garage' }),
+    haState('climate.living_room', 'heat', {
+      friendly_name: 'Living room heating',
+      temperature: 21.5,
+      current_temperature: 20.8,
+      min_temp: 7,
+      max_temp: 30,
+      target_temp_step: 0.5,
+      temperature_unit: '°C',
+    }),
+    haState('climate.bedroom', 'heat_cool', { friendly_name: 'Bedroom climate' }),
+    haState('scene.movie_night', '2024-03-12T20:00:00+00:00', { friendly_name: 'Movie night' }),
+    haState('script.evening_routine', 'off', { friendly_name: 'Evening routine' }),
+    haState('automation.night_mode', 'on', { friendly_name: 'Night mode' }),
+    haState('button.restart_hub', 'unknown', { friendly_name: 'Restart hub' }),
+    haState('group.all_lights', 'off', { friendly_name: 'All lights' }),
+    haState('sensor.hall_temperature', '21.5', { friendly_name: 'Hall temperature', unit_of_measurement: '°C' }),
+    haState('binary_sensor.front_door_contact', 'off', { friendly_name: 'Front door contact' }),
+    haState('lock.front_door', 'locked', { friendly_name: 'Front door lock' }),
+    haState('media_player.living_room_tv', 'playing', { friendly_name: 'Living room TV' }),
+    haState('person.mike', 'home', { friendly_name: 'Mike' }),
+    haState('sun.sun', 'above_horizon', { friendly_name: 'Sun' }),
+  ];
+}
+
+/** Rooms as Home Assistant's template reports them. Entities listed nowhere have no room. */
+export function defaultRooms() {
+  return [
+    { id: 'kitchen', name: 'Kitchen', entities: ['light.kitchen', 'light.broken'] },
+    {
+      id: 'living_room',
+      name: 'Living room',
+      entities: ['light.hall', 'cover.living_room_blinds', 'climate.living_room', 'media_player.living_room_tv', 'switch.coffee'],
+    },
+    { id: 'bedroom', name: 'Bedroom', entities: ['light.bedside', 'climate.bedroom'] },
+  ];
+}
+
+// The service calls the mock understands, and what each one does to the state.
+function applyService(current, rooms, domain, service, data) {
+  const roomLights = data.area_id
+    ? (rooms.find((room) => room.id === data.area_id)?.entities ?? []).filter((id) => id.startsWith('light.'))
+    : null;
+  const targets = data.entity_id ? [data.entity_id] : roomLights ?? [];
+
+  for (const id of targets) {
+    if (!current[id]) return { status: 400, body: { message: `Unknown entity ${id}` } };
+  }
+
+  for (const id of targets) {
+    const entity = current[id];
+    const attributes = entity.attributes;
+    if (service === 'toggle') entity.state = entity.state === 'on' ? 'off' : 'on';
+    if (domain === 'light' && service === 'turn_on') {
+      entity.state = 'on';
+      if (typeof data.brightness_pct === 'number') attributes.brightness = Math.round((data.brightness_pct * 255) / 100);
+      else if (attributes.brightness === undefined) attributes.brightness = 255;
+    }
+    // A light switched on without a level comes on at full brightness, as Home Assistant does.
+    if (domain === 'light' && service === 'toggle' && entity.state === 'on' && attributes.brightness === undefined) {
+      attributes.brightness = 255;
+    }
+    if (domain === 'light' && service === 'turn_off') entity.state = 'off';
+    if (domain === 'homeassistant' && service === 'turn_on') entity.state = 'on';
+    if (domain === 'homeassistant' && service === 'turn_off') entity.state = 'off';
+    if (domain === 'cover' && service === 'open_cover') {
+      entity.state = 'open';
+      attributes.current_position = 100;
+    }
+    if (domain === 'cover' && service === 'close_cover') {
+      entity.state = 'closed';
+      attributes.current_position = 0;
+    }
+    if (domain === 'climate' && service === 'set_temperature') attributes.temperature = data.temperature;
+  }
+  return { status: 200, body: [] };
+}
+
+/**
+ * A stand-in for Home Assistant. It keeps its own state, applies the services
+ * it receives and records every request, so tests can check what really changed.
+ */
+export async function startHomeAssistant({ states = defaultHaStates(), rooms = defaultRooms(), failRooms = false, failStates = false } = {}) {
   const calls = [];
-  const current = structuredClone(states);
+  const current = Object.fromEntries(structuredClone(states).map((state) => [state.entity_id, state]));
+
   const mock = await listen(async (req, res) => {
     const url = new URL(req.url, 'http://mock');
     const body = await readBody(req);
@@ -120,31 +228,45 @@ export async function startHomeAssistant(states) {
       return json(res, 401, { message: 'Invalid access token or password' });
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/states') {
+      if (failStates) return json(res, 500, { message: 'broken on purpose' });
+      return json(res, 200, Object.values(current));
+    }
+
     const state = /^\/api\/states\/([^/]+)$/.exec(url.pathname);
     if (req.method === 'GET' && state) {
       return current[state[1]] ? json(res, 200, current[state[1]]) : json(res, 404, { message: 'Entity not found.' });
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/template') {
+      if (failRooms) return json(res, 500, { message: 'template broken on purpose' });
+      const { template = '' } = JSON.parse(body || '{}');
+      if (!template.includes('areas()')) return json(res, 400, { message: 'Unsupported template in this mock' });
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      return res.end(rooms.map((room) => `${room.id}|${room.name}|${room.entities.join(',')}\n`).join(''));
+    }
+
     const service = /^\/api\/services\/([^/]+)\/([^/]+)$/.exec(url.pathname);
     if (req.method === 'POST' && service) {
-      const { entity_id: entityId } = JSON.parse(body || '{}');
-      if (!current[entityId]) return json(res, 400, { message: 'Unknown entity' });
-      if (service[2] === 'toggle') {
-        current[entityId].state = current[entityId].state === 'on' ? 'off' : 'on';
-      }
-      return json(res, 200, []);
+      const result = applyService(current, rooms, service[1], service[2], JSON.parse(body || '{}'));
+      return json(res, result.status, result.body);
     }
 
     return json(res, 404, { message: 'Unknown route' });
   });
+
   return { ...mock, calls, states: current, close: () => closeServer(mock.server) };
 }
 
 /** Starts the dashboard against whatever upstreams the env points at. */
-export async function startDashboard(env) {
+export async function startDashboard(env, { now } = {}) {
   const config = loadConfig(env);
   const immich = createImmichClient(config.immich);
-  const homeAssistant = createHomeAssistantClient(config.homeAssistant);
+  const homeAssistant = createHomeAssistantClient({
+    ...config.homeAssistant,
+    now,
+    logger: { warn() {} },
+  });
   const server = createApp({ config, immich, homeAssistant, logger: { error() {} } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();

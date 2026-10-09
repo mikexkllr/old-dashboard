@@ -25,7 +25,8 @@ if (immich.enabled) {
 }
 
 if (homeAssistant.enabled) {
-  console.log(`Home Assistant: ${config.homeAssistant.url} (${config.homeAssistant.entityIds.length} entities)`);
+  const { includeIds, hideIds } = config.homeAssistant;
+  console.log(`Home Assistant: ${config.homeAssistant.url} (${includeIds.length} extra entities, ${hideIds.length} hidden)`);
 } else {
   console.log('Home Assistant: off (set HA_URL and HA_TOKEN to enable)');
 }

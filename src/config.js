@@ -93,7 +93,9 @@ export function loadConfig(env = process.env) {
     homeAssistant: {
       url: haUrl,
       token: haToken,
-      entityIds: list(env, 'HA_ENTITIES', isEntityId, 'entity id (expected something like light.kitchen)'),
+      // Extra entities to show and control, such as scripts, automations and garage doors.
+      includeIds: list(env, 'HA_ENTITIES', isEntityId, 'entity id (expected something like script.evening_routine)'),
+      hideIds: list(env, 'HA_HIDE_ENTITIES', isEntityId, 'entity id (expected something like sensor.router_uptime)'),
     },
   };
 }

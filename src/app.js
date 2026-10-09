@@ -14,6 +14,7 @@ const CONTENT_TYPES = {
   '.ico': 'image/x-icon',
 };
 
+const MAX_BODY_BYTES = 1024;
 const PHOTOS_OFF = 'Photos are off. Set IMMICH_URL and IMMICH_API_KEY on the server.';
 const HOME_OFF = 'Home Assistant is off. Set HA_URL and HA_TOKEN on the server.';
 
@@ -67,18 +68,30 @@ async function route(req, res, pathname, { config, immich, homeAssistant, public
     return res.end(image.body);
   }
 
-  if (pathname === '/api/ha/entities') {
+  if (pathname === '/api/ha/controls') {
     requireMethod(req, 'GET');
-    if (!homeAssistant.enabled) return sendJson(res, 200, { configured: false, entities: [] });
-    return sendJson(res, 200, { configured: true, entities: await homeAssistant.getEntities() });
+    if (!homeAssistant.enabled) {
+      return sendJson(res, 200, { configured: false, areasAvailable: false, entities: [], missing: [] });
+    }
+    return sendJson(res, 200, await homeAssistant.getControls());
   }
 
-  const action = /^\/api\/ha\/entities\/([^/]+)\/action$/.exec(pathname);
-  if (action) {
+  const command = /^\/api\/ha\/entities\/([^/]+)\/command$/.exec(pathname);
+  if (command) {
     requireMethod(req, 'POST');
     requireEnabled(homeAssistant.enabled, HOME_OFF);
-    const entity = await homeAssistant.runAction(decodeSegment(action[1]));
+    const body = await readJsonBody(req);
+    const entity = await homeAssistant.runCommand(decodeSegment(command[1]), body.command, body.value);
     return sendJson(res, 200, { entity });
+  }
+
+  const roomLights = /^\/api\/ha\/rooms\/([^/]+)\/lights-off$/.exec(pathname);
+  if (roomLights) {
+    requireMethod(req, 'POST');
+    requireEnabled(homeAssistant.enabled, HOME_OFF);
+    await readJsonBody(req);
+    await homeAssistant.lightsOffInArea(decodeSegment(roomLights[1]));
+    return sendJson(res, 200, { ok: true });
   }
 
   if (pathname.startsWith('/api/')) throw new HttpError(404, 'Not found');
@@ -112,6 +125,36 @@ async function serveStatic(req, res, pathname, publicDir) {
     'x-content-type-options': 'nosniff',
   });
   res.end(req.method === 'HEAD' ? undefined : body);
+}
+
+// Reads a small JSON object from the request body. An empty body counts as {}.
+// An oversized body is drained before answering, so the client sees the 413
+// rather than a dropped connection.
+async function readJsonBody(req) {
+  const chunks = [];
+  let size = 0;
+  let tooLarge = false;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) {
+      tooLarge = true;
+    } else {
+      chunks.push(chunk);
+    }
+  }
+  if (tooLarge) throw new HttpError(413, 'Request body is too large');
+  if (size === 0) return {};
+
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new HttpError(400, 'Request body must be JSON');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new HttpError(400, 'Request body must be a JSON object');
+  }
+  return parsed;
 }
 
 function sendJson(res, status, body, headers = {}) {
