@@ -17,6 +17,7 @@ const CONTENT_TYPES = {
 const MAX_BODY_BYTES = 1024;
 const PHOTOS_OFF = 'Photos are off. Set IMMICH_URL and IMMICH_API_KEY on the server.';
 const HOME_OFF = 'Home Assistant is off. Set HA_URL and HA_TOKEN on the server.';
+const VOICE_OFF = 'Voice control is off. Set HA_VOICE=true on the server.';
 
 export function createApp({ config, immich, homeAssistant, publicDir = DEFAULT_PUBLIC_DIR, logger = console }) {
   // Lets the page notice when the server was restarted, for example by a redeploy.
@@ -48,6 +49,7 @@ async function route(req, res, pathname, { config, immich, homeAssistant, public
       ...config.frame,
       photosEnabled: immich.enabled,
       homeAssistantEnabled: homeAssistant.enabled,
+      voiceEnabled: homeAssistant.voiceEnabled,
       startedAt,
     });
   }
@@ -97,6 +99,13 @@ async function route(req, res, pathname, { config, immich, homeAssistant, public
     return sendJson(res, 200, { ok: true });
   }
 
+  if (pathname === '/api/ha/conversation') {
+    requireMethod(req, 'POST');
+    requireEnabled(homeAssistant.voiceEnabled, VOICE_OFF);
+    const body = await readJsonBody(req);
+    return sendJson(res, 200, await homeAssistant.converse(body.text, body.conversationId));
+  }
+
   if (pathname.startsWith('/api/')) throw new HttpError(404, 'Not found');
 
   return serveStatic(req, res, pathname, publicDir);
@@ -133,6 +142,11 @@ async function serveStatic(req, res, pathname, publicDir) {
 // Reads a small JSON object from the request body. An empty body counts as {}.
 // An oversized body is drained before answering, so the client sees the 413
 // rather than a dropped connection.
+//
+// The body must be declared as JSON. A page on another site can send a form or
+// plain text to the dashboard without asking first, but a browser only sends
+// JSON across sites after a CORS preflight, which the dashboard never allows.
+// So a web page opened elsewhere on the network cannot send commands.
 async function readJsonBody(req) {
   const chunks = [];
   let size = 0;
@@ -146,6 +160,10 @@ async function readJsonBody(req) {
     }
   }
   if (tooLarge) throw new HttpError(413, 'Request body is too large');
+  const type = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+  if (type !== 'application/json') {
+    throw new HttpError(415, 'Request body must be JSON, sent with Content-Type: application/json');
+  }
   if (size === 0) return {};
 
   let parsed;

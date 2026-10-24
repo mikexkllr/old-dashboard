@@ -32,6 +32,12 @@ if (homeAssistant.enabled) {
   console.log('Home Assistant: off (set HA_URL and HA_TOKEN to enable)');
 }
 
+if (homeAssistant.voiceEnabled) {
+  console.log(`Voice: Home Assistant Assist (${config.homeAssistant.voiceAgent || 'built-in agent'})`);
+} else if (homeAssistant.enabled) {
+  console.log('Voice: off (set HA_VOICE=true to enable)');
+}
+
 for (const [variable, url] of [['IMMICH_URL', config.immich.url], ['HA_URL', config.homeAssistant.url]]) {
   const hint = localNameHint(variable, url);
   if (hint) console.warn(`Warning: ${hint}`);

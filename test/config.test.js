@@ -66,3 +66,19 @@ test('PHOTO_FIT only accepts the known modes', () => {
   assert.equal(loadConfig({ PHOTO_FIT: 'Contain' }).frame.photoFit, 'contain');
   assert.throws(() => loadConfig({ PHOTO_FIT: 'stretch' }), /PHOTO_FIT/);
 });
+
+test('voice is off by default, and needs Home Assistant to be on', () => {
+  const ha = { HA_URL: 'http://192.168.1.10:8123', HA_TOKEN: 't' };
+  assert.equal(loadConfig(ha).homeAssistant.voice, false);
+  assert.equal(loadConfig({ ...ha, HA_VOICE: 'true' }).homeAssistant.voice, true);
+  assert.throws(() => loadConfig({ HA_VOICE: 'true' }), /HA_VOICE needs HA_URL and HA_TOKEN/);
+  assert.throws(() => loadConfig({ ...ha, HA_VOICE: 'sometimes' }), /HA_VOICE/);
+});
+
+test('HA_VOICE_AGENT must look like a conversation agent id', () => {
+  const voice = { HA_URL: 'http://192.168.1.10:8123', HA_TOKEN: 't', HA_VOICE: 'true' };
+  assert.equal(loadConfig(voice).homeAssistant.voiceAgent, '');
+  assert.equal(loadConfig({ ...voice, HA_VOICE_AGENT: ' conversation.openai ' }).homeAssistant.voiceAgent, 'conversation.openai');
+  assert.equal(loadConfig({ ...voice, HA_VOICE_AGENT: '01JABCDEF0123456789XYZ' }).homeAssistant.voiceAgent, '01JABCDEF0123456789XYZ');
+  assert.throws(() => loadConfig({ ...voice, HA_VOICE_AGENT: 'my agent' }), /HA_VOICE_AGENT/);
+});

@@ -4,7 +4,7 @@
  *
  * Palette, since there are no variables to hold it:
  *   text #f5f5f7, secondary text rgba(235, 235, 245, 0.6), panel rgb(16, 18, 22)
- *   lights #ffb340, switches #30d158, covers #0a84ff, scenes #bf5af2,
+ *   lights #ffb340, switches #30d158, covers and voice #0a84ff, scenes #bf5af2,
  *   climate #ff9f0a, status #64d2ff
  */
 
@@ -77,6 +77,8 @@ button span {
 
 /* A grey wash shows a press on any background colour. */
 .close-button:active,
+.voice-button:active,
+.voice-send:active,
 .tab:active,
 .room-off:active,
 .tile-action:active,
@@ -350,6 +352,112 @@ button.tile:active,
 
 .close-button .icon {
   margin-right: 8px;
+}
+
+/* Voice: a question for Home Assistant, dictated with the keyboard's
+   microphone key or typed, and the answer below it */
+
+.voice-button {
+  width: 44px;
+  height: 44px;
+  margin-right: 10px;
+  padding: 0;
+  border-radius: 22px;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
+.voice-button.is-active {
+  background-color: #f5f5f7;
+  color: #1c1c1e;
+}
+
+.voice {
+  flex: none;
+  margin: 0 28px 18px;
+}
+
+.voice-row {
+  display: flex;
+  align-items: center;
+}
+
+/* 17px because iOS zooms into a field with text under 16px. The page turns
+   text selection off, which on iOS would also stop the field taking text. */
+.voice-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 48px;
+  margin: 0;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 24px;
+  outline: none;
+  background-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+  font: inherit;
+  font-size: 17px;
+  -webkit-appearance: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.voice-input::-webkit-input-placeholder {
+  color: rgba(235, 235, 245, 0.45);
+}
+
+.voice-input::placeholder {
+  color: rgba(235, 235, 245, 0.45);
+}
+
+.voice-send {
+  flex: none;
+  height: 48px;
+  margin-left: 10px;
+  padding: 0 22px;
+  border-radius: 24px;
+  background-color: #0a84ff;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.voice-send:disabled {
+  opacity: 0.5;
+}
+
+.voice-heard {
+  margin: 12px 20px 0;
+  font-size: 15px;
+  color: rgba(235, 235, 245, 0.6);
+}
+
+/* A long answer from an AI agent scrolls rather than pushing the tiles away. */
+.voice-answer {
+  max-height: 25vh;
+  margin: 6px 20px 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.voice-answer.is-hint {
+  margin-top: 12px;
+  font-size: 15px;
+  font-weight: 400;
+  color: rgba(235, 235, 245, 0.6);
+}
+
+.voice-answer.is-failed {
+  color: #ffd28a;
+}
+
+.voice-answer.is-busy {
+  color: rgba(235, 235, 245, 0.6);
+  -webkit-animation: busy 0.8s ease-in-out infinite alternate;
+  animation: busy 0.8s ease-in-out infinite alternate;
 }
 
 .tabs {
@@ -831,6 +939,16 @@ button.tile:active,
 
   .panel-note {
     margin: 0 16px 12px;
+  }
+
+  .voice {
+    margin: 0 16px 14px;
+  }
+
+  .voice-heard,
+  .voice-answer {
+    margin-left: 12px;
+    margin-right: 12px;
   }
 
   .content {

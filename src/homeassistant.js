@@ -3,8 +3,15 @@ import { HttpError, unreachableError } from './errors.js';
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const AREA_ID = /^[a-z0-9_]+$/;
 const REQUEST_TIMEOUT_MS = 10_000;
+const CONVERSE_TIMEOUT_MS = 30_000; // an AI conversation agent can take a while to answer
 const STATES_TTL_MS = 2_000; // one entity list serves every panel poll in this window
 const ROOMS_TTL_MS = 60_000; // room layout changes rarely
+// Home Assistant makes these up, as ULIDs in current versions.
+const CONVERSATION_ID = /^[\w.:-]{1,100}$/;
+
+// Longer than any spoken command, and short enough to fit the 1 KB request body
+// even in a script that needs three bytes a character.
+const MAX_VOICE_TEXT = 250;
 
 export const COMMANDS = new Set(['toggle', 'brightness', 'run', 'open', 'stop', 'close', 'temperature']);
 
@@ -270,22 +277,26 @@ export function createHomeAssistantClient({
   token = '',
   includeIds = [],
   hideIds = [],
+  voice = false,
+  voiceAgent = '',
   fetchImpl = fetch,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  converseTimeoutMs = CONVERSE_TIMEOUT_MS,
   now = Date.now,
   logger = console,
 } = {}) {
   const enabled = Boolean(url && token);
+  const voiceEnabled = enabled && voice;
   const included = new Set(includeIds);
   const hidden = new Set(hideIds);
   let lastRooms = null;
 
-  async function send(apiPath, init = {}) {
+  async function send(apiPath, init = {}, waitMs = timeoutMs) {
     try {
       return await fetchImpl(`${url}${apiPath}`, {
         ...init,
         headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...init.headers },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(waitMs),
       });
     } catch (err) {
       throw unreachableError('Home Assistant', 'HA_URL', url, err);
@@ -412,5 +423,53 @@ export function createHomeAssistantClient({
     cachedStates.invalidate();
   }
 
-  return { enabled, getControls, runCommand, lightsOffInArea };
+  // Hands a sentence to Assist, which works out what to do, does it and answers
+  // in words. Passing back the conversation id lets a follow-up such as "and
+  // the kitchen?" continue the last request. Assist not understanding is still
+  // an answer, with the response type "error", rather than a failed request.
+  async function converse(text, conversationId) {
+    const sentence = typeof text === 'string' ? text.trim() : '';
+    if (sentence === '') throw new HttpError(400, 'Say or type something for Home Assistant');
+    if (sentence.length > MAX_VOICE_TEXT) {
+      throw new HttpError(400, `Keep it to ${MAX_VOICE_TEXT} characters`);
+    }
+    const continuing = conversationId !== undefined && conversationId !== null;
+    if (continuing && (typeof conversationId !== 'string' || !CONVERSATION_ID.test(conversationId))) {
+      throw new HttpError(400, 'Invalid conversation id');
+    }
+
+    const body = { text: sentence };
+    if (continuing) body.conversation_id = conversationId;
+    if (voiceAgent) body.agent_id = voiceAgent;
+    const res = await send('/api/conversation/process', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }, converseTimeoutMs);
+    if (!res.ok) {
+      await drain(res);
+      if (res.status === 400 && voiceAgent) {
+        throw new HttpError(502, `Home Assistant refused the voice command. Check that HA_VOICE_AGENT (${voiceAgent}) is a conversation agent.`);
+      }
+      throw statusError(res.status, 'the voice command');
+    }
+    const result = await readJson(res, 'the voice command');
+    // The command may have changed something, so the panel should not be shown the old states.
+    cachedStates.invalidate();
+
+    const response = result?.response;
+    if (typeof response?.response_type !== 'string') {
+      throw new HttpError(502, 'Home Assistant sent an unexpected reply for the voice command');
+    }
+    const speech = response.speech?.plain?.speech;
+    const nextId = result.conversation_id;
+    return {
+      speech: typeof speech === 'string' ? speech.trim() : '',
+      responseType: response.response_type,
+      language: typeof response.language === 'string' ? response.language : null,
+      conversationId: typeof nextId === 'string' && CONVERSATION_ID.test(nextId) ? nextId : null,
+    };
+  }
+
+  return { enabled, voiceEnabled, getControls, runCommand, lightsOffInArea, converse };
 }

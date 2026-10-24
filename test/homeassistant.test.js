@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildControls,
   classify,
+  createHomeAssistantClient,
   describeEntity,
   normalizeValue,
   parseRooms,
@@ -197,4 +198,50 @@ test('checks brightness and temperature values before they reach Home Assistant'
 
   assert.throws(() => normalizeValue(light, 'toggle', 1), /does not take a value/);
   assert.equal(normalizeValue(light, 'toggle', undefined), undefined);
+});
+
+// A client whose Home Assistant always sends back `reply` for a voice command.
+function voiceClient(reply, status = 200) {
+  const fetchImpl = async () => new Response(JSON.stringify(reply), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+  return createHomeAssistantClient({ url: 'http://ha.test', token: 't', voice: true, fetchImpl });
+}
+
+test('voice answers are trimmed, and keep the language and conversation id Assist gives', async () => {
+  const client = voiceClient({
+    response: { response_type: 'query_answer', language: 'de', speech: { plain: { speech: ' Es sind 21 Grad. ' } } },
+    conversation_id: '01J9Z7K1M3S8TQ0Y6E4H2B5N7C',
+    continue_conversation: false,
+  });
+  assert.deepEqual(await client.converse('Wie warm ist es im Flur?'), {
+    speech: 'Es sind 21 Grad.',
+    responseType: 'query_answer',
+    language: 'de',
+    conversationId: '01J9Z7K1M3S8TQ0Y6E4H2B5N7C',
+  });
+});
+
+test('a voice answer without words or a usable conversation id still comes through', async () => {
+  const client = voiceClient({ response: { response_type: 'action_done', speech: {} }, conversation_id: 'has spaces' });
+  assert.deepEqual(await client.converse('Licht an'), {
+    speech: '',
+    responseType: 'action_done',
+    language: null,
+    conversationId: null,
+  });
+});
+
+test('a reply that is not an Assist answer is reported as a bad gateway', async () => {
+  for (const reply of [null, [], { message: 'API running.' }, { response: { speech: 'hi' } }]) {
+    await assert.rejects(voiceClient(reply).converse('Licht an'), (err) => err.status === 502, JSON.stringify(reply));
+  }
+  await assert.rejects(voiceClient({ message: 'boom' }, 500).converse('Licht an'), /HTTP 500 for the voice command/);
+});
+
+test('voice is only on when Home Assistant is configured and HA_VOICE asks for it', () => {
+  assert.equal(createHomeAssistantClient({ url: 'http://ha.test', token: 't' }).voiceEnabled, false);
+  assert.equal(createHomeAssistantClient({ voice: true }).voiceEnabled, false);
+  assert.equal(createHomeAssistantClient({ url: 'http://ha.test', token: 't', voice: true }).voiceEnabled, true);
 });

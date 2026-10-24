@@ -21,8 +21,11 @@
   var STALL_MS = 5 * 60 * 1000;              // reload if no new photo has appeared for this long
   var DAILY_RELOAD_MS = 24 * 60 * 60 * 1000; // restart once a day to keep old iPad memory fresh
   var FLASH_MS = 4 * 1000;                   // how long a failed action shows its error
+  var REQUEST_TIMEOUT_MS = 15 * 1000;
+  var VOICE_TIMEOUT_MS = 35 * 1000;          // the server waits up to 30 seconds for Assist
   var PHOTOS_OFF_TEXT = 'Photos are off. Set IMMICH_URL and IMMICH_API_KEY on the server.';
   var HOME_OFF_TEXT = 'Home Assistant is off. Set HA_URL and HA_TOKEN on the server.';
+  var VOICE_HINT_TEXT = 'Tap the microphone on the keyboard and speak, then tap Send.';
 
   var CATEGORY_ORDER = ['lights', 'covers', 'switches', 'scenes', 'climate', 'status'];
   var CATEGORY_LABELS = {
@@ -46,6 +49,7 @@
     door: 'M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M4 21h16M14.5 12h.01',
     pulse: 'M3 12h4l3-7 4 14 3-7h4',
     photos: 'M3 5h18v14H3zM3 16l5-5 5 5 3-3 5 5M15.5 9.5h.01',
+    mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3M8 21h8',
     up: 'M6 15l6-6 6 6',
     down: 'M6 9l6 6 6-6',
     minus: 'M6 12h12',
@@ -81,7 +85,8 @@
     showCaptions: true,
     panelIdleSeconds: 60,
     photosEnabled: true,
-    homeAssistantEnabled: true
+    homeAssistantEnabled: true,
+    voiceEnabled: false
   };
 
   var els = {};
@@ -117,6 +122,13 @@
   var panelPoll = null;
   var panelIdleTimer = null;
   var refreshing = false;
+
+  // Voice state
+  var voiceOpen = false;
+  var voiceBusy = false;
+  var voiceSession = 0;      // goes up when the voice bar closes, so a late answer is dropped
+  var conversationId = null; // lets a follow-up continue the conversation
+  var speechReady = false;
 
   function byId(id) {
     return document.getElementById(id);
@@ -181,10 +193,10 @@
   }
 
   // XMLHttpRequest rather than fetch, so it works on every iOS 12 Safari.
-  function request(method, url, body, callback) {
+  function request(method, url, body, callback, timeoutMs) {
     var xhr = new XMLHttpRequest();
     xhr.open(method, url, true);
-    xhr.timeout = 15000;
+    xhr.timeout = timeoutMs || REQUEST_TIMEOUT_MS;
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.onreadystatechange = function () {
       if (xhr.readyState !== 4) {
@@ -555,6 +567,9 @@
   }
 
   function closePanel() {
+    if (voiceOpen) {
+      closeVoice();
+    }
     panelOpen = false;
     els.panel.className = 'panel hidden';
     els.frame.className = '';
@@ -1128,6 +1143,118 @@
     commandEntity(entityId, 'temperature', next);
   }
 
+  // ---- Voice ------------------------------------------------------------
+  //
+  // iOS 12 Safari has no speech recognition for web pages, and a home-screen
+  // app gets no microphone, so the words come from the keyboard's own
+  // dictation key. Home Assistant's Assist works out what to do and answers in
+  // words, which the page shows and reads aloud.
+
+  function setVoiceHeard(text) {
+    setText(els.voiceHeard, text);
+    setClass(els.voiceHeard, text ? 'voice-heard' : 'voice-heard hidden');
+  }
+
+  function setVoiceAnswer(text, state) {
+    setText(els.voiceAnswer, text);
+    setClass(els.voiceAnswer, state ? 'voice-answer ' + state : 'voice-answer');
+  }
+
+  function openVoice() {
+    voiceOpen = true;
+    setClass(els.voice, 'voice');
+    setClass(els.voiceToggle, 'voice-button is-active');
+    setVoiceHeard('');
+    setVoiceAnswer(VOICE_HINT_TEXT, 'is-hint');
+    // iOS only brings up the keyboard for a field focused during a tap.
+    els.voiceInput.focus();
+    touchPanel();
+  }
+
+  // Closing ends the conversation, so the next question starts a new one.
+  function closeVoice() {
+    voiceOpen = false;
+    voiceSession++;
+    conversationId = null;
+    els.voiceInput.blur();
+    els.voiceInput.value = '';
+    setClass(els.voice, 'voice hidden');
+    setClass(els.voiceToggle, 'voice-button');
+  }
+
+  // iOS lets a page speak only after it has spoken during a tap. Saying
+  // nothing during the tap that sends a question lets the answer be read out
+  // when it arrives later.
+  function prepareSpeech() {
+    if (speechReady || !window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      return;
+    }
+    speechReady = true;
+    window.speechSynthesis.speak(new window.SpeechSynthesisUtterance(''));
+  }
+
+  // The language is Home Assistant's, so a German answer gets a German voice.
+  function speak(text, language) {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      return;
+    }
+    var utterance = new window.SpeechSynthesisUtterance(text);
+    if (language) {
+      utterance.lang = language;
+    }
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function sendVoice() {
+    var text = els.voiceInput.value.trim();
+    if (text === '' || voiceBusy) {
+      return;
+    }
+    touchPanel();
+    prepareSpeech();
+    voiceBusy = true;
+    setDisabled(els.voiceSend, true);
+    // Hiding the keyboard uncovers the answer and the tiles it changes.
+    els.voiceInput.blur();
+    els.voiceInput.value = '';
+    setVoiceHeard('“' + text + '”');
+    setVoiceAnswer('Asking Home Assistant...', 'is-busy');
+
+    var session = voiceSession;
+    var body = { text: text };
+    if (conversationId) {
+      body.conversationId = conversationId;
+    }
+    request('POST', 'api/ha/conversation', body, function (err, reply) {
+      voiceBusy = false;
+      setDisabled(els.voiceSend, false);
+      if (session !== voiceSession) {
+        return;
+      }
+      touchPanel();
+      if (err || !reply) {
+        setVoiceAnswer(err || 'Home Assistant gave no answer.', 'is-failed');
+        return;
+      }
+      conversationId = reply.conversationId || null;
+      var failed = reply.responseType === 'error';
+      setVoiceAnswer(reply.speech || (failed ? 'Home Assistant could not do that.' : 'Done.'), failed ? 'is-failed' : '');
+      if (reply.speech) {
+        speak(reply.speech, reply.language);
+      }
+      if (reply.responseType === 'action_done') {
+        setTimeout(function () {
+          if (panelOpen) {
+            refreshControls();
+          }
+        }, REFRESH_AFTER_COMMAND_MS);
+      }
+    }, VOICE_TIMEOUT_MS);
+  }
+
   function slideParts(el) {
     var images = el.getElementsByTagName('img');
     return { el: el, fill: images[0], photo: images[1] };
@@ -1148,6 +1275,12 @@
     els.panelNote = byId('panel-note');
     els.tabs = byId('tabs');
     els.content = byId('content');
+    els.voiceToggle = byId('voice-toggle');
+    els.voice = byId('voice');
+    els.voiceInput = byId('voice-input');
+    els.voiceSend = byId('voice-send');
+    els.voiceHeard = byId('voice-heard');
+    els.voiceAnswer = byId('voice-answer');
     slides = [slideParts(byId('slide-a')), slideParts(byId('slide-b'))];
   }
 
@@ -1182,6 +1315,25 @@
       }
     };
     els.panelClose.onclick = closePanel;
+    els.voiceToggle.appendChild(makeIcon('mic'));
+    els.voiceToggle.onclick = function () {
+      if (voiceOpen) {
+        closeVoice();
+      } else {
+        openVoice();
+      }
+    };
+    els.voice.onsubmit = function (event) {
+      event.preventDefault();
+      sendVoice();
+      return false;
+    };
+    // Typing and dictating touch only the keyboard, which is not the page.
+    els.voiceInput.oninput = touchPanel;
+    // iOS 12 can leave the page scrolled up after the keyboard closes.
+    els.voiceInput.onblur = function () {
+      window.scrollTo(0, 0);
+    };
     // This touch handler also lets iOS show the :active press states.
     els.panel.ontouchstart = function () {
       if (panelOpen) {
@@ -1194,6 +1346,9 @@
     loadConfig(function () {
       if (!config.showClock) {
         els.clock.className = 'clock hidden';
+      }
+      if (config.voiceEnabled) {
+        els.voiceToggle.className = 'voice-button';
       }
       renderClock();
       setInterval(renderClock, 1000);

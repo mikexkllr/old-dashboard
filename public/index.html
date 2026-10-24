@@ -33,9 +33,18 @@
       </div>
       <div class="panel-side">
         <div class="panel-time" id="panel-time"></div>
+        <button type="button" class="voice-button hidden" id="voice-toggle" title="Voice" aria-label="Voice"></button>
         <button type="button" class="close-button" id="panel-close"><span>Photos</span></button>
       </div>
     </div>
+    <form class="voice hidden" id="voice" action="">
+      <div class="voice-row">
+        <input class="voice-input" id="voice-input" type="text" maxlength="250" autocomplete="off" placeholder="Ask Home Assistant">
+        <button type="submit" class="voice-send" id="voice-send"><span>Send</span></button>
+      </div>
+      <div class="voice-heard hidden" id="voice-heard"></div>
+      <div class="voice-answer" id="voice-answer"></div>
+    </form>
     <div class="tabs" id="tabs"></div>
     <div class="panel-note hidden" id="panel-note"></div>
     <div class="content" id="content"></div>

@@ -211,11 +211,43 @@ function applyService(current, rooms, domain, service, data) {
   return { status: 200, body: [] };
 }
 
+// Home Assistant starts a conversation with a new ULID like this one.
+export const CONVERSATION_ID = '01J9Z7K1M3S8TQ0Y6E4H2B5N7C';
+
+// A small stand-in for Assist. It understands "turn on <name>" and "turn off
+// <name>", and answers anything else the way Assist does when nothing matches.
+function assist(current, { text, conversation_id: conversationId = CONVERSATION_ID }) {
+  const reply = (responseType, speech, data) => ({
+    response: {
+      response_type: responseType,
+      language: 'en',
+      data,
+      speech: { plain: { speech, extra_data: null } },
+      card: {},
+    },
+    conversation_id: conversationId,
+    continue_conversation: false,
+  });
+  const match = /^turn (on|off) (?:the )?(.+)$/i.exec(String(text).trim());
+  const name = match?.[2].toLowerCase();
+  const entity = Object.values(current).find((state) => state.attributes.friendly_name?.toLowerCase() === name);
+  if (!entity) return reply('error', "Sorry, I couldn't understand that", { code: 'no_intent_match' });
+  entity.state = match[1].toLowerCase();
+  const target = { name: entity.attributes.friendly_name, type: 'entity', id: entity.entity_id };
+  return reply('action_done', `Turned ${entity.state} ${target.name}`, { success: [target], failed: [] });
+}
+
 /**
  * A stand-in for Home Assistant. It keeps its own state, applies the services
  * it receives and records every request, so tests can check what really changed.
  */
-export async function startHomeAssistant({ states = defaultHaStates(), rooms = defaultRooms(), failRooms = false, failStates = false } = {}) {
+export async function startHomeAssistant({
+  states = defaultHaStates(),
+  rooms = defaultRooms(),
+  agents = ['conversation.home_assistant'],
+  failRooms = false,
+  failStates = false,
+} = {}) {
   const calls = [];
   const current = Object.fromEntries(structuredClone(states).map((state) => [state.entity_id, state]));
 
@@ -250,6 +282,14 @@ export async function startHomeAssistant({ states = defaultHaStates(), rooms = d
     if (req.method === 'POST' && service) {
       const result = applyService(current, rooms, service[1], service[2], JSON.parse(body || '{}'));
       return json(res, result.status, result.body);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/conversation/process') {
+      const request = JSON.parse(body || '{}');
+      if (request.agent_id !== undefined && !agents.includes(request.agent_id)) {
+        return json(res, 400, { message: 'Message format incorrect: invalid agent ID' });
+      }
+      return json(res, 200, assist(current, request));
     }
 
     return json(res, 404, { message: 'Unknown route' });

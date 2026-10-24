@@ -1,6 +1,9 @@
 import { isEntityId } from './homeassistant.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// An agent's entity id, such as conversation.home_assistant, or the config
+// entry id that older agent integrations use.
+const AGENT_ID = /^[A-Za-z0-9_.]+$/;
 const PHOTO_FIT_MODES = ['auto', 'cover', 'contain'];
 
 function text(env, name, fallback = '') {
@@ -69,6 +72,15 @@ export function loadConfig(env = process.env) {
     throw new Error('Set both HA_URL and HA_TOKEN to enable Home Assistant, or leave both empty');
   }
 
+  const voice = boolean(env, 'HA_VOICE', false);
+  if (voice && !haUrl) {
+    throw new Error('HA_VOICE needs HA_URL and HA_TOKEN, because Home Assistant answers the voice commands');
+  }
+  const voiceAgent = text(env, 'HA_VOICE_AGENT');
+  if (voiceAgent && !AGENT_ID.test(voiceAgent)) {
+    throw new Error(`HA_VOICE_AGENT must be a conversation agent id such as conversation.home_assistant (got "${voiceAgent}")`);
+  }
+
   const photoFit = text(env, 'PHOTO_FIT', 'auto').toLowerCase();
   if (!PHOTO_FIT_MODES.includes(photoFit)) {
     throw new Error(`PHOTO_FIT must be one of ${PHOTO_FIT_MODES.join(', ')}`);
@@ -96,6 +108,9 @@ export function loadConfig(env = process.env) {
       // Extra entities to show and control, such as scripts, automations and garage doors.
       includeIds: list(env, 'HA_ENTITIES', isEntityId, 'entity id (expected something like script.evening_routine)'),
       hideIds: list(env, 'HA_HIDE_ENTITIES', isEntityId, 'entity id (expected something like sensor.router_uptime)'),
+      // Voice commands go to Assist, which controls what is exposed to it in Home Assistant.
+      voice,
+      voiceAgent,
     },
   };
 }

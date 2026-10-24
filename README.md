@@ -7,6 +7,7 @@ Old iPads can't run most modern apps, but Safari still loads plain web pages. Th
 - **Photo frame:** a full-screen slideshow of random photos from [Immich](https://immich.app), with a clock and the date each photo was taken. Swipe left to skip to the next photo, or right to go back to the ones before.
 - **Screensaver:** the photos are what the screen shows when nobody is using it.
 - **Home panel:** tap the photo to open the controls. They are loaded from Home Assistant: every light (with brightness), room by room, plus covers, switches, scenes, climate and sensors. The panel returns to the photos after a minute without a tap.
+- **Voice:** tap the microphone on the home panel and dictate with the iPad keyboard, for example "turn off the kitchen lights". Home Assistant's Assist does it and answers, on screen and out loud. Voice is off until you turn it on. See [Voice control](#voice-control).
 
 The server talks to Immich and Home Assistant, so their keys never reach the iPad. It runs as one Docker container and has no npm dependencies at runtime.
 
@@ -81,6 +82,8 @@ Without Portainer, run `cp .env.example .env`, edit it, then `docker compose up 
 | `HA_TOKEN` | none | Long-lived access token from step 2. |
 | `HA_ENTITIES` | none | Extra entities to show and control, on top of the ones found automatically. Use it for scripts, automations, buttons, groups and garage, door or gate covers. See [Home Assistant entities](#home-assistant-entities). |
 | `HA_HIDE_ENTITIES` | none | Entities to leave off the panel, for example noisy sensors. |
+| `HA_VOICE` | `false` | `true` adds a microphone button to the home panel for voice commands, which Home Assistant's Assist carries out. Needs `HA_URL` and `HA_TOKEN`. Read [What voice can reach](#what-voice-can-reach) first. |
+| `HA_VOICE_AGENT` | built-in agent | The conversation agent that answers voice commands, for example `conversation.openai_conversation`. |
 | `SLIDE_INTERVAL_SECONDS` | `60` | Seconds each photo stays on screen. |
 | `PHOTO_FIT` | `auto` | `auto` fills the screen when a photo's shape is close to the screen's, and shows the whole photo when they differ a lot (a portrait photo on a landscape screen, for example). `cover` always fills, `contain` always shows the whole photo. |
 | `SHOW_CLOCK` | `true` | Show the clock and date over the photos. |
@@ -107,6 +110,33 @@ A few kinds of entity stay off the panel until you list them in `HA_ENTITIES`, b
 
 `HA_HIDE_ENTITIES` removes any entity from the panel, including one you listed. The names come from Home Assistant's friendly names, so rename entities there.
 
+## Voice control
+
+Ask Home Assistant for something from the home panel, such as "turn off the kitchen lights" or "what's the temperature in the bedroom?". Home Assistant's Assist does what you asked, and its answer is shown on the panel and read aloud.
+
+iOS 12 Safari can't turn speech into text for a web page, and an app on the home screen can't use the microphone before iOS 13.4. The iPad keyboard can, so voice uses its dictation key:
+
+1. Tap the photo to open the home panel, then tap the microphone button next to the clock. The keyboard opens.
+2. Tap the microphone key on the keyboard and say what you want. The words appear in the field.
+3. Tap **Send**.
+
+You can type instead of speaking. Assist keeps track of the conversation, so a follow-up such as "and in the bedroom?" works until you close the voice bar with the microphone button.
+
+To set it up:
+
+1. In Home Assistant, check which entities Assist may control. See [What voice can reach](#what-voice-can-reach).
+2. Set `HA_VOICE=true` and redeploy.
+3. On the iPad, go to **Settings > General > Keyboard** and turn on **Enable Dictation**. On iOS 12, dictation sends the recording to Apple to turn it into text, so the iPad needs an internet connection for this part.
+4. Dictate in the language Home Assistant is set to (**Settings > System > General** in Home Assistant). Dictation uses the keyboard's language, so add a keyboard in that language on the iPad, and switch to it with the globe key.
+
+Home Assistant's built-in agent answers by default. To use another conversation agent, such as an AI agent you have set up in Home Assistant, set `HA_VOICE_AGENT` to its entity ID, which starts with `conversation.`.
+
+### What voice can reach
+
+Voice commands go to Assist, which decides what to do. Assist can control every entity exposed to it under **Settings > Voice assistants > Expose** in Home Assistant. That is not the panel's list: `HA_ENTITIES` and `HA_HIDE_ENTITIES` don't apply, and a garage door doesn't need to be listed first.
+
+By default, Home Assistant exposes new lights, switches, fans, covers (garage doors included), climate devices, media players, scenes, vacuums and a few others to Assist, but not locks, alarms or scripts. Before you turn voice on, stop exposing anything the iPad must not control, such as a garage door. The setting applies to Assist everywhere in Home Assistant, not only on the iPad.
+
 ## Photos
 
 - Photos are picked at random from the whole library, or from `IMMICH_ALBUM_IDS`.
@@ -117,8 +147,10 @@ A few kinds of entity stay off the panel until you list them in `HA_ENTITIES`, b
 ## Security
 
 - The dashboard has no login. Anyone who can reach its port can see the photos and control the entities on the panel. Keep it on your home network or a VPN, and do not forward its port to the internet.
-- Garage, door and gate covers, scripts, automations and buttons are not reachable until you list them in `HA_ENTITIES`. Locks and alarms cannot be controlled at all.
-- Every command is checked on the server against the entity's current state and its allowed commands, so the browser cannot ask for anything the panel does not offer.
+- On the panel, garage, door and gate covers, scripts, automations and buttons are not reachable until you list them in `HA_ENTITIES`. Locks and alarms cannot be controlled at all.
+- Every panel command is checked on the server against the entity's current state and its allowed commands, so the browser cannot ask for anything the panel does not offer.
+- Voice is off unless you set `HA_VOICE=true`. When it is on, anyone who can reach the dashboard can ask Assist for anything it can do, and the panel's limits above don't apply. Assist only controls what Home Assistant exposes to it. See [What voice can reach](#what-voice-can-reach). With an AI agent that charges per request, each question may cost money.
+- Commands must be sent as JSON. Browsers only send JSON to another site after asking it first, and the dashboard always says no. So a web page from elsewhere, open on a phone or computer in your home, can't send commands to it.
 - Portainer deploys whatever is on `main`, so only you should be able to push to this repository. Anyone who can push there can change what runs on your server.
 - The Immich key and the Home Assistant token stay on the server. They are never sent to the browser.
 
@@ -137,6 +169,7 @@ Requires Node.js 22 or newer. The only dev dependency is `acorn`, which the test
 - The browser code uses `XMLHttpRequest` rather than `fetch`.
 - Taps use `<button>` elements, and the frame's click handler is set as a property, which older iOS Safari reliably dispatches.
 - The page reloads itself if the slideshow stalls, and once a day, to keep memory in check.
+- Voice uses the keyboard's dictation key. iOS 12 Safari has no speech recognition for web pages (it arrived in iOS 14.5), and it gives the microphone only to pages served over HTTPS, and to home-screen apps only from iOS 13.4. The answers are read aloud with `speechSynthesis`, which iOS has had since version 7.
 - The browser features the page relies on were checked against MDN's compatibility data for iOS Safari.
 
 ## Status
@@ -144,6 +177,7 @@ Requires Node.js 22 or newer. The only dev dependency is `acorn`, which the test
 - The server and the page are covered by `npm test`. The page was checked with the mock servers in a desktop Chromium at iPad and phone sizes, and rendered in macOS WebKit, the engine behind Safari.
 - The Home Assistant side was checked against Home Assistant's core source for the service names and attributes it uses. The room template was rendered with Jinja2 and parsed by the server, and the tests use a mock Home Assistant that keeps state and applies services.
 - The Immich integration is written against Immich's API spec for version 3.3. Immich 3.2 and later use the `filter` search, and older servers use the top-level search fields. Both shapes are covered by tests with mock servers, but neither has been run against a live Immich server yet.
+- Voice was checked against Home Assistant's conversation API documentation and source. The tests use a mock Assist that changes the mock's state, and the voice bar was tried in desktop Chromium at iPad and phone sizes. Keyboard dictation and the spoken answers have not been tried on an iOS 12 iPad yet.
 - This has not yet been tested on a real iOS 12 iPad. If something breaks there, please open an issue with the iPad model and iOS version.
 
 ## License

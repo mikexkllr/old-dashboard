@@ -5,6 +5,7 @@ import {
   ALBUM_ID,
   ASSET_IMAGE,
   ASSET_MISSING,
+  CONVERSATION_ID,
   HA_TOKEN,
   IMMICH_KEY,
   PREVIEW_JPEG,
@@ -475,10 +476,150 @@ describe('Home Assistant defaults and caching', () => {
   });
 });
 
+describe('voice commands through Assist', () => {
+  let ha;
+  let dashboard;
+  const isConversation = (call) => call.path === '/api/conversation/process';
+
+  before(async () => {
+    ha = await startHomeAssistant();
+    dashboard = await startDashboard({ HA_URL: ha.url, HA_TOKEN, HA_VOICE: 'true' });
+  });
+
+  after(async () => {
+    await dashboard.close();
+    await ha.close();
+  });
+
+  test('the page is told that voice is on', async () => {
+    const config = await (await fetch(`${dashboard.url}/api/config`)).json();
+    assert.equal(config.voiceEnabled, true);
+  });
+
+  test('a sentence goes to Assist, which does what it says and answers in words', async () => {
+    const res = await post(`${dashboard.url}/api/ha/conversation`, { text: '  Turn on kitchen light ' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      speech: 'Turned on Kitchen light',
+      responseType: 'action_done',
+      language: 'en',
+      conversationId: CONVERSATION_ID,
+    });
+    assert.equal(ha.states['light.kitchen'].state, 'on');
+
+    const call = ha.calls.findLast(isConversation);
+    assert.equal(call.authorization, `Bearer ${HA_TOKEN}`);
+    assert.deepEqual(JSON.parse(call.body), { text: 'Turn on kitchen light' });
+  });
+
+  test('a follow-up continues the conversation', async () => {
+    await post(`${dashboard.url}/api/ha/conversation`, { text: 'turn off kitchen light', conversationId: CONVERSATION_ID });
+    assert.deepEqual(JSON.parse(ha.calls.findLast(isConversation).body), {
+      text: 'turn off kitchen light',
+      conversation_id: CONVERSATION_ID,
+    });
+  });
+
+  test('a sentence Assist does not understand is its answer, not a failure', async () => {
+    const res = await post(`${dashboard.url}/api/ha/conversation`, { text: 'make me a sandwich' });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.responseType, 'error');
+    assert.equal(body.speech, "Sorry, I couldn't understand that");
+  });
+
+  test('the panel shows what a voice command changed, without waiting for the cache', async () => {
+    const ha2 = await startHomeAssistant();
+    const clock = 1000; // frozen, so only the voice command can make the cache let go
+    const dashboard2 = await startDashboard({ HA_URL: ha2.url, HA_TOKEN, HA_VOICE: 'true' }, { now: () => clock });
+    try {
+      const kitchen = async () => (await (await fetch(`${dashboard2.url}/api/ha/controls`)).json())
+        .entities.find((entity) => entity.entity_id === 'light.kitchen');
+      assert.equal((await kitchen()).on, false);
+      await post(`${dashboard2.url}/api/ha/conversation`, { text: 'turn on kitchen light' });
+      assert.equal((await kitchen()).on, true);
+    } finally {
+      await dashboard2.close();
+      await ha2.close();
+    }
+  });
+
+  test('refuses empty, overlong and malformed requests without calling Assist', async () => {
+    const before = ha.calls.filter(isConversation).length;
+    for (const body of [
+      {},
+      { text: '   ' },
+      { text: 42 },
+      { text: 'x'.repeat(251) },
+      { text: 'turn on kitchen light', conversationId: 'not/an id' },
+      { text: 'turn on kitchen light', conversationId: 7 },
+    ]) {
+      const res = await post(`${dashboard.url}/api/ha/conversation`, body);
+      assert.equal(res.status, 400, `${JSON.stringify(body).slice(0, 60)} should be refused`);
+    }
+    assert.equal(ha.calls.filter(isConversation).length, before);
+  });
+
+  test('only takes JSON, so a page on another site cannot send commands', async () => {
+    const before = ha.calls.length;
+    for (const path of ['/api/ha/conversation', '/api/ha/entities/light.kitchen/command', '/api/ha/rooms/kitchen/lights-off']) {
+      const res = await fetch(`${dashboard.url}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain' },
+        body: JSON.stringify({ text: 'turn on kitchen light', command: 'toggle' }),
+      });
+      assert.equal(res.status, 415, path);
+    }
+    const empty = await fetch(`${dashboard.url}/api/ha/rooms/kitchen/lights-off`, { method: 'POST' });
+    assert.equal(empty.status, 415);
+    assert.equal(ha.calls.length, before);
+  });
+
+  test('only accepts POST', async () => {
+    const res = await fetch(`${dashboard.url}/api/ha/conversation`);
+    assert.equal(res.status, 405);
+    assert.equal(res.headers.get('allow'), 'POST');
+  });
+
+  test('HA_VOICE_AGENT picks the conversation agent, and an unknown one is explained', async () => {
+    const ha2 = await startHomeAssistant({ agents: ['conversation.home_assistant', 'conversation.openai'] });
+    const chosen = await startDashboard({ HA_URL: ha2.url, HA_TOKEN, HA_VOICE: 'true', HA_VOICE_AGENT: 'conversation.openai' });
+    const unknown = await startDashboard({ HA_URL: ha2.url, HA_TOKEN, HA_VOICE: 'true', HA_VOICE_AGENT: 'conversation.nope' });
+    try {
+      assert.equal((await post(`${chosen.url}/api/ha/conversation`, { text: 'turn on hall lights' })).status, 200);
+      assert.equal(JSON.parse(ha2.calls.findLast(isConversation).body).agent_id, 'conversation.openai');
+
+      const res = await post(`${unknown.url}/api/ha/conversation`, { text: 'turn on hall lights' });
+      assert.equal(res.status, 502);
+      assert.match((await res.json()).error, /HA_VOICE_AGENT \(conversation\.nope\)/);
+    } finally {
+      await chosen.close();
+      await unknown.close();
+      await ha2.close();
+    }
+  });
+
+  test('voice stays off unless HA_VOICE is set, and never reaches Assist', async () => {
+    const ha2 = await startHomeAssistant();
+    const off = await startDashboard({ HA_URL: ha2.url, HA_TOKEN });
+    try {
+      const config = await (await fetch(`${off.url}/api/config`)).json();
+      assert.equal(config.voiceEnabled, false);
+      const res = await post(`${off.url}/api/ha/conversation`, { text: 'turn on kitchen light' });
+      assert.equal(res.status, 503);
+      assert.match((await res.json()).error, /HA_VOICE=true/);
+      assert.equal(ha2.calls.some(isConversation), false);
+    } finally {
+      await off.close();
+      await ha2.close();
+    }
+  });
+});
+
 describe('Home Assistant with a wrong token or not configured', () => {
-  test('controls and commands explain the token problem', async () => {
+  test('controls, commands and voice explain the token problem', async () => {
     const ha = await startHomeAssistant();
-    const dashboard = await startDashboard({ HA_URL: ha.url, HA_TOKEN: 'wrong-token' });
+    const dashboard = await startDashboard({ HA_URL: ha.url, HA_TOKEN: 'wrong-token', HA_VOICE: 'true' });
     try {
       const list = await fetch(`${dashboard.url}/api/ha/controls`);
       assert.equal(list.status, 502);
@@ -487,6 +628,10 @@ describe('Home Assistant with a wrong token or not configured', () => {
       const command = await post(`${dashboard.url}/api/ha/entities/light.kitchen/command`, { command: 'toggle' });
       assert.equal(command.status, 502);
       assert.match((await command.json()).error, /access token/);
+
+      const voice = await post(`${dashboard.url}/api/ha/conversation`, { text: 'turn on kitchen light' });
+      assert.equal(voice.status, 502);
+      assert.match((await voice.json()).error, /access token/);
     } finally {
       await dashboard.close();
       await ha.close();
@@ -543,6 +688,7 @@ describe('serving the frontend and the basic API', () => {
     assert.equal(config.showClock, true);
     assert.equal(config.photosEnabled, false);
     assert.equal(config.homeAssistantEnabled, false);
+    assert.equal(config.voiceEnabled, false);
     assert.match(config.startedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
 

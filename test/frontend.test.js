@@ -64,3 +64,12 @@ test('the page declares the iOS home-screen and viewport settings', () => {
   assert.match(html, /name="apple-mobile-web-app-capable" content="yes"/);
   assert.match(html, /<script src="app\.js"><\/script>/);
 });
+
+test('the voice field takes text on iOS, and is large enough that Safari does not zoom in on it', () => {
+  const css = read('style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = /\.voice-input\s*\{([^}]*)\}/.exec(css)[1];
+  // The page turns text selection off, which on iOS also stops a field taking text.
+  assert.match(rule, /-webkit-user-select:\s*text/);
+  const size = Number(/font-size:\s*(\d+)px/.exec(rule)[1]);
+  assert.ok(size >= 16, `iOS zooms into a field with ${size}px text`);
+});
