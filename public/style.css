@@ -125,6 +125,17 @@ button.tile:active,
   transition: opacity 1.5s ease-in-out;
 }
 
+/* A swipe gets a quick fade. A fade cut short by a swipe ends at once. */
+.slide.is-front.is-quick {
+  -webkit-transition-duration: 0.4s;
+  transition-duration: 0.4s;
+}
+
+.slide.is-front.is-settled {
+  -webkit-transition: none;
+  transition: none;
+}
+
 .slide-photo {
   position: absolute;
   top: 0;

@@ -4,7 +4,7 @@ A photo frame and Home Assistant panel for iPads that are stuck on iOS 12.
 
 Old iPads can't run most modern apps, but Safari still loads plain web pages. This project keeps the modern parts on a small server and gives the iPad a page that iOS 12 Safari can run:
 
-- **Photo frame:** a full-screen slideshow of random photos from [Immich](https://immich.app), with a clock and the date each photo was taken.
+- **Photo frame:** a full-screen slideshow of random photos from [Immich](https://immich.app), with a clock and the date each photo was taken. Swipe left to skip to the next photo, or right to go back to the ones before.
 - **Screensaver:** the photos are what the screen shows when nobody is using it.
 - **Home panel:** tap the photo to open the controls. They are loaded from Home Assistant: every light (with brightness), room by room, plus covers, switches, scenes, climate and sensors. The panel returns to the photos after a minute without a tap.
 
@@ -112,6 +112,7 @@ A few kinds of entity stay off the panel until you list them in `HA_ENTITIES`, b
 - Photos are picked at random from the whole library, or from `IMMICH_ALBUM_IDS`.
 - Only photos in the timeline are used. Archived, hidden and locked photos, videos, trashed photos and offline files are skipped.
 - The dashboard asks Immich for a fresh random batch when it runs out, so the frame keeps changing without a restart.
+- Swipe left on the photo for the next one, and right to go back through the last 30. In a desktop browser, the arrow keys do the same. A tap still opens the home panel.
 
 ## Security
 

@@ -13,6 +13,9 @@
   var RETRY_MS = 60 * 1000;                  // wait before asking Immich again after a failure
   var LOAD_TIMEOUT_MS = 20 * 1000;           // give up on a photo that never finishes loading
   var FADE_MS = 1500;                        // the .slide.is-front transition in style.css
+  var QUICK_FADE_MS = 400;                   // the faster .is-quick fade after a swipe
+  var SWIPE_MIN_PX = 50;                     // shortest sideways move that counts as a swipe
+  var HISTORY_SIZE = 30;                     // photos a swipe to the right can go back through
   var CONTROLS_POLL_MS = 5 * 1000;           // refresh Home Assistant while the panel is open
   var REFRESH_AFTER_COMMAND_MS = 1500;       // Home Assistant can take a moment to report a change
   var STALL_MS = 5 * 60 * 1000;              // reload if no new photo has appeared for this long
@@ -85,8 +88,14 @@
   var slides = [];      // two layers that take turns: { el, fill, photo }
   var activeSlide = 0;
   var fadeTimer = null;
+  var pendingLoad = null; // the photo still loading, so a newer one can cancel it
   var playlist = [];
   var playlistIndex = 0;
+  var fetchingPlaylist = false;
+  var shown = [];       // photos shown so far, oldest first, so a swipe can go back
+  var shownPos = -1;    // the one on screen
+  var swipeStart = null; // where the current touch on the frame began
+  var swipedAt = 0;
   var hasShownPhoto = false;
   var startedAt = Date.now();
   var lastShownAt = Date.now();
@@ -304,20 +313,33 @@
 
   function scheduleNextSlide(delayMs) {
     clearTimeout(slideTimer);
-    slideTimer = setTimeout(showNextSlide, delayMs);
+    slideTimer = setTimeout(function () {
+      showNextSlide(false);
+    }, delayMs);
   }
 
-  function showNextSlide() {
+  // quick is true for a swipe, which gets a shorter fade than the timer.
+  function showNextSlide(quick) {
     clearTimeout(slideTimer);
     if (!config.photosEnabled) {
       showMessage(PHOTOS_OFF_TEXT);
       return;
     }
-    if (playlistIndex < playlist.length) {
-      loadPhoto(playlist[playlistIndex++]);
+    // After a swipe back, go forward through the photos already seen.
+    if (shownPos < shown.length - 1) {
+      loadPhoto(shown[shownPos + 1], shownPos + 1, quick);
       return;
     }
+    if (playlistIndex < playlist.length) {
+      loadPhoto(playlist[playlistIndex++], -1, quick);
+      return;
+    }
+    if (fetchingPlaylist) {
+      return;
+    }
+    fetchingPlaylist = true;
     fetchPlaylist(function (err) {
+      fetchingPlaylist = false;
       if (err) {
         if (!hasShownPhoto) {
           showMessage(err);
@@ -325,28 +347,68 @@
         scheduleNextSlide(RETRY_MS);
         return;
       }
-      loadPhoto(playlist[playlistIndex++]);
+      loadPhoto(playlist[playlistIndex++], -1, quick);
     });
   }
 
-  // The next photo loads into the slide that is not showing, then fades in.
-  function loadPhoto(photo) {
+  function showPreviousSlide() {
+    if (!config.photosEnabled || shownPos <= 0) {
+      return;
+    }
+    clearTimeout(slideTimer);
+    loadPhoto(shown[shownPos - 1], shownPos - 1, true);
+  }
+
+  // A swipe can start a new photo while the last one is still fading in.
+  // Finishing that fade at once covers the slide underneath, so the new
+  // photo loads into it unseen.
+  function settleFade() {
+    if (fadeTimer === null) {
+      return;
+    }
+    clearTimeout(fadeTimer);
+    fadeTimer = null;
+    slides[activeSlide].el.className = 'slide is-front is-settled';
+    slides[1 - activeSlide].el.className = 'slide';
+  }
+
+  // The photo loads into the slide that is not showing, then fades in.
+  // position is its place in `shown`, or -1 for a photo not shown before.
+  // A newer load cancels one still in progress.
+  function loadPhoto(photo, position, quick) {
+    if (pendingLoad) {
+      pendingLoad.cancel();
+    }
+    settleFade();
     var incoming = slides[1 - activeSlide];
     var img = incoming.photo;
     var url = 'api/photos/' + encodeURIComponent(photo.id) + '/image';
     var finished = false;
     var guard = null;
+    var load = {
+      cancel: function () {
+        stop();
+      }
+    };
+    pendingLoad = load;
+
+    function stop() {
+      finished = true;
+      clearTimeout(guard);
+      img.onload = null;
+      img.onerror = null;
+      if (pendingLoad === load) {
+        pendingLoad = null;
+      }
+    }
 
     function finish(ok) {
       if (finished) {
         return;
       }
-      finished = true;
-      clearTimeout(guard);
-      img.onload = null;
-      img.onerror = null;
+      stop();
       if (ok) {
-        showPhoto(incoming, photo);
+        showPhoto(incoming, photo, position, quick);
       } else {
         scheduleNextSlide(2000);
       }
@@ -370,9 +432,19 @@
     }
   }
 
-  function showPhoto(slide, photo) {
+  function showPhoto(slide, photo, position, quick) {
     var outgoing = slides[activeSlide];
     applyFit(slide);
+
+    if (position === -1) {
+      shown.push(photo);
+      if (shown.length > HISTORY_SIZE) {
+        shown.shift();
+      }
+      shownPos = shown.length - 1;
+    } else {
+      shownPos = position;
+    }
 
     // The old photo stays fully visible underneath while the new one fades in
     // on top, so the picture never dips towards black halfway.
@@ -381,15 +453,16 @@
     // Reading a layout value applies the transparent state first, so the
     // fade always starts from nothing.
     void slide.el.offsetWidth;
-    slide.el.className = 'slide is-front';
+    slide.el.className = quick ? 'slide is-front is-quick' : 'slide is-front';
     activeSlide = 1 - activeSlide;
 
     clearTimeout(fadeTimer);
     fadeTimer = setTimeout(function () {
+      fadeTimer = null;
       if (slides[activeSlide] !== outgoing) {
         outgoing.el.className = 'slide';
       }
-    }, FADE_MS + 200);
+    }, (quick ? QUICK_FADE_MS : FADE_MS) + 200);
 
     hasShownPhoto = true;
     lastShownAt = Date.now();
@@ -400,6 +473,35 @@
     els.caption.className = caption ? 'caption' : 'caption hidden';
 
     scheduleNextSlide(config.intervalSeconds * 1000);
+  }
+
+  // A swipe left shows the next photo, and a swipe right the one before.
+  // Anything else, such as a tap, is left to the click that opens the panel.
+  function onFrameTouchStart(event) {
+    var touch = event.touches[0];
+    swipeStart = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY } : null;
+  }
+
+  function onFrameTouchEnd(event) {
+    var start = swipeStart;
+    swipeStart = null;
+    if (!start || panelOpen) {
+      return;
+    }
+    var touch = event.changedTouches[0];
+    var dx = touch.clientX - start.x;
+    var dy = touch.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < 2 * Math.abs(dy)) {
+      return;
+    }
+    // A swipe is not a tap, so it must not open the panel as well.
+    event.preventDefault();
+    swipedAt = Date.now();
+    if (dx < 0) {
+      showNextSlide(true);
+    } else {
+      showPreviousSlide();
+    }
   }
 
   // Restarts the page when the slideshow has silently stalled, and once a day.
@@ -1055,8 +1157,28 @@
     // iOS only sends click events for elements with a click handler, so the
     // handler is set as a property rather than with addEventListener.
     els.frame.onclick = function () {
-      if (!panelOpen) {
+      if (!panelOpen && Date.now() - swipedAt > 500) {
         openPanel();
+      }
+    };
+    els.frame.ontouchstart = onFrameTouchStart;
+    els.frame.ontouchend = onFrameTouchEnd;
+    els.frame.ontouchcancel = function () {
+      swipeStart = null;
+    };
+    // Stops Safari from dragging the whole page around under the finger.
+    els.frame.ontouchmove = function (event) {
+      event.preventDefault();
+    };
+    // The arrow keys do the same as a swipe in a desktop browser.
+    document.onkeydown = function (event) {
+      if (panelOpen) {
+        return;
+      }
+      if (event.keyCode === 39) {
+        showNextSlide(true);
+      } else if (event.keyCode === 37) {
+        showPreviousSlide();
       }
     };
     els.panelClose.onclick = closePanel;
@@ -1077,7 +1199,7 @@
       setInterval(renderClock, 1000);
       setInterval(watchdog, 30 * 1000);
       setInterval(checkForNewServer, 60 * 1000);
-      showNextSlide();
+      showNextSlide(false);
     });
   }
 
