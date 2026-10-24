@@ -1,4 +1,4 @@
-import { HttpError } from './errors.js';
+import { HttpError, unreachableError } from './errors.js';
 
 const ASSET_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PREVIEW_TYPES = ['image/jpeg', 'image/png'];
@@ -55,7 +55,7 @@ export function createImmichClient({
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new HttpError(502, `Cannot reach Immich (${err.cause?.code ?? err.name}). Check IMMICH_URL.`);
+      throw unreachableError('Immich', 'IMMICH_URL', url, err);
     }
   }
 

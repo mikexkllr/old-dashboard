@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
+import { localNameHint } from './errors.js';
 import { createHomeAssistantClient } from './homeassistant.js';
 import { createImmichClient } from './immich.js';
 
@@ -29,6 +30,11 @@ if (homeAssistant.enabled) {
   console.log(`Home Assistant: ${config.homeAssistant.url} (${includeIds.length} extra entities, ${hideIds.length} hidden)`);
 } else {
   console.log('Home Assistant: off (set HA_URL and HA_TOKEN to enable)');
+}
+
+for (const [variable, url] of [['IMMICH_URL', config.immich.url], ['HA_URL', config.homeAssistant.url]]) {
+  const hint = localNameHint(variable, url);
+  if (hint) console.warn(`Warning: ${hint}`);
 }
 
 server.listen(config.port, () => {

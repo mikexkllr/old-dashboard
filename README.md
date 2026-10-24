@@ -47,7 +47,7 @@ Portainer builds the dashboard from this repository, and redeploys it whenever `
 - `IMMICH_URL=http://<umbrel-ip>:2283` for Immich
 - `HA_URL=http://<umbrel-ip>:8123` for Home Assistant
 
-Use the IP address, not `umbrel.local`, because containers can't resolve `.local` names. Give the Umbrel a fixed IP address in your router so these URLs keep working. Check both before you deploy:
+Use the IP address, not `umbrel.local`, because containers can't resolve `.local` names. With a `.local` name, the dashboard warns in its log at startup, and the panel names the cause when it cannot connect. Give the Umbrel a fixed IP address in your router so these URLs keep working. Check both before you deploy:
 
 ```bash
 curl http://<umbrel-ip>:2283/api/server/version

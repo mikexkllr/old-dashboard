@@ -1,4 +1,4 @@
-import { HttpError } from './errors.js';
+import { HttpError, unreachableError } from './errors.js';
 
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const AREA_ID = /^[a-z0-9_]+$/;
@@ -288,7 +288,7 @@ export function createHomeAssistantClient({
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new HttpError(502, `Cannot reach Home Assistant (${err.cause?.code ?? err.name}). Check HA_URL.`);
+      throw unreachableError('Home Assistant', 'HA_URL', url, err);
     }
   }
 
