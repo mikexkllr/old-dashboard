@@ -1,6 +1,11 @@
 /*
  * Plain CSS on purpose for iOS 12 Safari: no flexbox gap, no CSS variables,
  * no clamp(), no inset, no aspect-ratio. `npm test` checks for these.
+ *
+ * Palette, since there are no variables to hold it:
+ *   text #f5f5f7, secondary text rgba(235, 235, 245, 0.6), panel rgb(16, 18, 22)
+ *   lights #ffb340, switches #30d158, covers #0a84ff, scenes #bf5af2,
+ *   climate #ff9f0a, status #64d2ff
  */
 
 html,
@@ -11,8 +16,10 @@ body {
   height: 100%;
   overflow: hidden;
   background: #000;
-  color: #fff;
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #f5f5f7;
+  font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
@@ -30,6 +37,55 @@ body {
   display: none !important;
 }
 
+/* Shared: icons and buttons */
+
+.icon {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 0;
+  vertical-align: middle;
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon.is-solid svg {
+  fill: currentColor;
+  stroke: none;
+}
+
+button {
+  -webkit-appearance: none;
+  margin: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button span {
+  vertical-align: middle;
+}
+
+/* A grey wash shows a press on any background colour. */
+.close-button:active,
+.tab:active,
+.room-off:active,
+.tile-action:active,
+button.tile:active,
+.tile-main:active {
+  background-image: -webkit-linear-gradient(top, rgba(128, 128, 128, 0.18), rgba(128, 128, 128, 0.18));
+  background-image: linear-gradient(rgba(128, 128, 128, 0.18), rgba(128, 128, 128, 0.18));
+}
+
 /* Photo frame */
 
 #frame {
@@ -38,12 +94,38 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 0;
   overflow: hidden;
   background: #000;
   cursor: pointer;
 }
 
+/* Two slides take turns. The new one fades in above the old one, which stays
+   fully visible underneath until the fade ends, so the picture never dips. */
 .slide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+}
+
+.slide.is-back {
+  z-index: 1;
+  opacity: 1;
+}
+
+.slide.is-front {
+  z-index: 2;
+  opacity: 1;
+  -webkit-transition: opacity 1.5s ease-in-out;
+  transition: opacity 1.5s ease-in-out;
+}
+
+.slide-photo {
   position: absolute;
   top: 0;
   left: 0;
@@ -51,63 +133,111 @@ body {
   height: 100%;
   display: block;
   border: 0;
-  opacity: 0;
-  -webkit-transition: opacity 1.5s ease-in-out;
-  transition: opacity 1.5s ease-in-out;
 }
 
-.slide.visible {
-  opacity: 1;
+/* Behind a photo shown whole: the same photo, blurred and dimmed, in place of
+   black bars. It is drawn at a quarter of the size and scaled up four times,
+   which keeps the blur cheap for an old iPad. The extra 12.5% on each side
+   hides the soft edge a blur leaves. */
+.slide-fill {
+  position: absolute;
+  top: -12.5%;
+  left: -12.5%;
+  width: 31.25%;
+  height: 31.25%;
+  display: block;
+  border: 0;
+  object-fit: cover;
+  -webkit-transform-origin: 0 0;
+  transform-origin: 0 0;
+  -webkit-transform: scale(4);
+  transform: scale(4);
+  -webkit-filter: blur(10px) brightness(0.5) saturate(1.3);
+  filter: blur(10px) brightness(0.5) saturate(1.3);
 }
 
 .shade {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
-  height: 45%;
+  z-index: 3;
   pointer-events: none;
-  background-image: -webkit-linear-gradient(top, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7));
-  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7));
+}
+
+/* Keeps the iPad's status bar readable over a bright sky. */
+.shade-top {
+  top: 0;
+  height: 80px;
+  background-image: -webkit-linear-gradient(top, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0));
+  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0));
+}
+
+.shade-bottom {
+  bottom: 0;
+  height: 55%;
+  background-image: -webkit-linear-gradient(top, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.14) 40%, rgba(0, 0, 0, 0.62));
+  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.14) 40%, rgba(0, 0, 0, 0.62));
 }
 
 .clock {
   position: absolute;
-  left: 4vw;
-  bottom: 6vh;
+  left: 5vmin;
+  bottom: 4.5vmin;
+  z-index: 3;
   pointer-events: none;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .clock-time {
-  font-size: 11vw;
+  font-size: 17vmin;
   font-weight: 200;
   line-height: 1;
+  letter-spacing: -0.03em;
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
 }
 
 .clock-date {
-  margin-top: 1vh;
-  font-size: 3.6vw;
+  margin-top: 0.4vmin;
+  padding-left: 0.8vmin;
+  font-size: 3.4vmin;
+  font-weight: 500;
+  opacity: 0.92;
 }
 
 .caption {
   position: absolute;
-  right: 3vw;
-  bottom: 3vh;
+  right: 5vmin;
+  bottom: 5.4vmin;
+  z-index: 3;
   pointer-events: none;
-  font-size: 2.2vw;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+  font-size: 2.2vmin;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }
 
 .message {
   position: absolute;
-  left: 6vw;
-  right: 6vw;
-  top: 44%;
+  top: 50%;
+  left: 10%;
+  right: 10%;
+  z-index: 3;
   text-align: center;
-  font-size: 3vw;
-  line-height: 1.4;
-  color: #ddd;
+  -webkit-transform: translateY(-50%);
+  transform: translateY(-50%);
+}
+
+.message-text {
+  display: inline-block;
+  padding: 16px 24px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #e5e5ea;
+  font-size: 18px;
+  line-height: 1.45;
 }
 
 /* Home panel: a column with a fixed header and a scrolling body */
@@ -118,67 +248,138 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  background: rgba(12, 14, 18, 0.95);
+  background: rgba(16, 18, 22, 0.985);
+  -webkit-animation: panel-in 0.25s ease-out;
+  animation: panel-in 0.25s ease-out;
 }
 
+/* Frosted glass over the current photo where Safari can do it. The tint stays
+   dark enough to read even when iOS skips the blur, as with Reduce Transparency. */
+@supports (-webkit-backdrop-filter: blur(1px)) {
+  .panel {
+    background: rgba(16, 18, 22, 0.76);
+    -webkit-backdrop-filter: blur(30px) saturate(140%);
+  }
+}
+
+/* The panel has its own clock, so the frame's text would only show through. */
+#frame.is-covered .clock,
+#frame.is-covered .caption,
+#frame.is-covered .message {
+  visibility: hidden;
+}
+
+@-webkit-keyframes panel-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes panel-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@-webkit-keyframes content-in {
+  from { -webkit-transform: translateY(14px); }
+  to { -webkit-transform: translateY(0); }
+}
+
+@keyframes content-in {
+  from { transform: translateY(14px); }
+  to { transform: translateY(0); }
+}
+
+/* The top padding clears the status bar of the home-screen app. */
 .panel-bar {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 12vh;
-  padding: 0 4vw;
+  padding: 30px 28px 16px;
 }
 
 .panel-title {
-  font-size: 3.6vw;
-  font-weight: 600;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.panel-date {
+  margin-top: 3px;
+  font-size: 15px;
+  color: rgba(235, 235, 245, 0.6);
+}
+
+.panel-side {
+  display: flex;
+  align-items: center;
+}
+
+.panel-time {
+  margin-right: 20px;
+  font-size: 32px;
+  font-weight: 300;
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
 }
 
 .close-button {
-  -webkit-appearance: none;
-  border: 0;
-  border-radius: 12px;
-  padding: 1.6vh 2.6vw;
-  background: #3a3f4a;
-  color: #fff;
-  font: inherit;
-  font-size: 2.2vw;
-  cursor: pointer;
+  height: 44px;
+  padding: 0 18px 0 14px;
+  border-radius: 22px;
+  background-color: rgba(255, 255, 255, 0.14);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.close-button .icon {
+  margin-right: 8px;
 }
 
 .tabs {
   flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  padding: 0 3vw 1.5vh;
+  padding: 0 28px 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
-  -webkit-appearance: none;
-  margin: 0 1vw 1vh 0;
-  padding: 1.2vh 2.4vw;
-  border: 0;
-  border-radius: 999px;
-  background: #232832;
-  color: #cfd6e0;
-  font: inherit;
-  font-size: 2.2vw;
-  cursor: pointer;
+  display: inline-block;
+  height: 40px;
+  margin-right: 8px;
+  padding: 0 18px;
+  border-radius: 20px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: rgba(235, 235, 245, 0.8);
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .tab.is-active {
-  background: #f0b232;
-  color: #1d1d1d;
+  background-color: #f5f5f7;
+  color: #1c1c1e;
 }
 
 .panel-note {
   flex: none;
-  padding: 0 4vw 1vh;
-  font-size: 2vw;
-  color: #ffb4a8;
+  margin: 0 28px 16px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(255, 159, 10, 0.16);
+  color: #ffd28a;
+  font-size: 15px;
+  line-height: 1.4;
 }
 
 .content {
@@ -186,155 +387,446 @@ body {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0 3vw 4vh;
+  padding: 2px 28px 28px;
+  -webkit-animation: content-in 0.3s ease-out;
+  animation: content-in 0.3s ease-out;
 }
 
 .room {
-  margin-bottom: 2.5vh;
+  margin-bottom: 14px;
 }
 
 .room-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 1.3% 1.2vh;
+  min-height: 44px;
+  margin-bottom: 10px;
 }
 
 .room-title {
-  font-size: 2.8vw;
-  font-weight: 600;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.room-summary {
+  margin-top: 1px;
+  font-size: 14px;
+  color: rgba(235, 235, 245, 0.55);
 }
 
 .room-off {
-  -webkit-appearance: none;
-  border: 0;
-  border-radius: 10px;
-  padding: 1vh 2vw;
-  background: #3a3f4a;
-  color: #fff;
-  font: inherit;
-  font-size: 2vw;
-  cursor: pointer;
+  flex: none;
+  height: 36px;
+  padding: 0 14px 0 10px;
+  border-radius: 18px;
+  background-color: rgba(255, 255, 255, 0.12);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.room-off .icon {
+  width: 18px;
+  height: 18px;
+  margin-right: 6px;
+  color: #ffb340;
 }
 
 .room-off:disabled {
   opacity: 0.5;
 }
 
+/* Tiles: a grid built from wrapping flex items. The negative margin cancels
+   the outer half of each tile's margin. */
+
 .tiles {
   display: flex;
   flex-wrap: wrap;
-  align-content: flex-start;
+  margin: 0 -6px;
 }
 
+/* Every tile has the same height. Its head sits at the top and its foot (the
+   slider, buttons or value) at the bottom, whatever kind of tile it is. */
 .tile {
-  -webkit-appearance: none;
+  position: relative;
   box-sizing: border-box;
-  width: 22%;
-  min-height: 17vh;
-  margin: 0 1.3% 2vh;
-  padding: 2.4vh 2vw;
-  border: 0;
-  border-radius: 16px;
-  background: #2b303a;
-  color: #f2f2f2;
-  font: inherit;
+  width: 23%;
+  width: calc(25% - 12px);
+  height: 136px;
+  margin: 0 6px 12px;
+  padding: 0;
+  border-radius: 20px;
+  background-color: rgba(255, 255, 255, 0.09);
+  color: #f5f5f7;
+  text-align: left;
+  overflow: hidden;
+  -webkit-transition: background-color 0.2s, color 0.2s, opacity 0.2s;
+  transition: background-color 0.2s, color 0.2s, opacity 0.2s;
+}
+
+.tile.is-on {
+  background-color: rgba(245, 245, 247, 0.96);
+  color: #1c1c1e;
+}
+
+.tile.is-unavailable {
+  opacity: 0.4;
+}
+
+.tile.is-failed {
+  background-color: rgba(255, 69, 58, 0.3);
+  color: #fff;
+}
+
+.tile-main {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: transparent;
   text-align: left;
 }
 
-button.tile {
-  cursor: pointer;
+.tile-head {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
 }
 
-.tile:disabled {
-  cursor: default;
+.tile-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  background-color: rgba(255, 255, 255, 0.12);
+  color: rgba(235, 235, 245, 0.85);
+  text-align: center;
+  -webkit-transition: background-color 0.2s, color 0.2s;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.tile-icon svg {
+  width: 22px;
+  height: 22px;
+  margin-top: 9px;
+}
+
+.tile.is-on .tile-icon {
+  color: #fff;
+}
+
+.cat-lights.is-on .tile-icon {
+  background-color: #ffb340;
+}
+
+.cat-switches.is-on .tile-icon {
+  background-color: #30d158;
+}
+
+.cat-covers.is-active .tile-icon {
+  background-color: #0a84ff;
+  color: #fff;
+}
+
+.cat-climate.is-active .tile-icon {
+  background-color: #ff9f0a;
+  color: #fff;
+}
+
+.cat-scenes .tile-icon {
+  background-color: rgba(191, 90, 242, 0.24);
+  color: #dcaaf8;
+}
+
+.cat-status .tile-icon {
+  background-color: rgba(100, 210, 255, 0.16);
+  color: #8adfff;
+}
+
+.tile.is-busy .tile-icon {
+  -webkit-animation: busy 0.8s ease-in-out infinite alternate;
+  animation: busy 0.8s ease-in-out infinite alternate;
+}
+
+@-webkit-keyframes busy {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
+
+@keyframes busy {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
+
+.tile-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 12px;
 }
 
 .tile-name {
-  font-size: 2.4vw;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 16px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.25;
   word-wrap: break-word;
 }
 
 .tile-status {
-  margin-top: 1.2vh;
-  font-size: 2.2vw;
-  opacity: 0.85;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: rgba(235, 235, 245, 0.6);
 }
 
-.tile.is-on {
-  background: #f0b232;
-  color: #1d1d1d;
+.tile.is-on .tile-status {
+  color: rgba(60, 60, 67, 0.7);
 }
 
-.tile.is-info {
-  background: #1b2430;
-  color: #cfd8e3;
+.tile.is-failed .tile-status {
+  color: #ffd6d2;
+  white-space: normal;
 }
 
-.tile.is-unavailable {
-  background: #1d1f24;
-  color: #6f7480;
+.tile-foot {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  height: 36px;
 }
 
-.tile.is-failed {
-  background: #7a2e2e;
-  color: #fff;
+/* Foot: the value of a sensor */
+.tile-value {
+  position: absolute;
+  left: 2px;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  font-size: 26px;
+  font-weight: 300;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.tile.is-busy {
-  opacity: 0.55;
+/* Foot: an on/off switch, drawn only; the whole tile is the button */
+.switch {
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+  width: 46px;
+  height: 28px;
+  border-radius: 14px;
+  background-color: rgba(255, 255, 255, 0.18);
+  -webkit-transition: background-color 0.2s;
+  transition: background-color 0.2s;
 }
 
-.tile-main {
-  display: block;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  -webkit-appearance: none;
-  cursor: pointer;
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  -webkit-transition: -webkit-transform 0.2s;
+  transition: transform 0.2s;
 }
 
-.slider {
-  display: block;
-  width: 100%;
-  margin: 1.4vh 0 0;
+.tile.is-on .switch {
+  background-color: #30d158;
 }
 
-.tile-actions {
+.cat-lights.is-on .switch {
+  background-color: #ffb340;
+}
+
+.tile.is-on .switch-knob {
+  -webkit-transform: translateX(18px);
+  transform: translateX(18px);
+}
+
+/* Foot: the run mark of a scene or script */
+.run-mark {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  width: 32px;
+  height: 32px;
+  border-radius: 16px;
+  background-color: rgba(255, 255, 255, 0.14);
+  text-align: center;
+}
+
+.run-mark svg {
+  width: 14px;
+  height: 14px;
+  margin-top: 9px;
+  margin-left: 2px;
+}
+
+/* Foot: buttons for covers, and the climate stepper */
+.tile-buttons,
+.tile-stepper {
   display: flex;
-  margin-top: 1.4vh;
+  align-items: center;
 }
 
 .tile-action {
-  -webkit-appearance: none;
   flex: 1 1 0%;
-  margin: 0 1vw 0 0;
-  padding: 1.1vh 0;
-  border: 0;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.14);
-  color: inherit;
-  font: inherit;
-  font-size: 2.2vw;
-  cursor: pointer;
+  height: 36px;
+  margin-right: 8px;
+  padding: 0;
+  border-radius: 12px;
+  background-color: rgba(255, 255, 255, 0.12);
 }
 
 .tile-action:last-child {
   margin-right: 0;
 }
 
-.tile-action:disabled {
-  opacity: 0.5;
+.tile-action .icon {
+  width: 20px;
+  height: 20px;
 }
 
-@media (max-width: 800px) {
+.tile-action:disabled {
+  opacity: 0.4;
+}
+
+.tile-stepper .tile-action {
+  flex: none;
+  width: 52px;
+  margin-right: 0;
+}
+
+.stepper-value {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 300;
+  white-space: nowrap;
+  -webkit-font-feature-settings: "tnum";
+  font-feature-settings: "tnum";
+}
+
+/* Foot: a brightness slider. The track is inset by half the knob, so the
+   filled part always ends under the middle of the knob. */
+.slider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 36px;
+}
+
+.slider-track {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  right: 14px;
+  height: 8px;
+  margin-top: -4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.16);
+}
+
+.tile.is-on .slider-track {
+  background-color: rgba(60, 60, 67, 0.14);
+}
+
+.slider-fill {
+  width: 0;
+  height: 100%;
+  background-color: #ffb340;
+}
+
+.slider-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+.slider-input::-webkit-slider-runnable-track {
+  height: 36px;
+  background: transparent;
+}
+
+.slider-input::-webkit-slider-thumb {
+  width: 28px;
+  height: 28px;
+  margin-top: 4px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  -webkit-appearance: none;
+}
+
+.slider-input:disabled::-webkit-slider-thumb {
+  background: #d8d8dc;
+}
+
+/* Wider screens get five tiles a row, narrower ones three or two. */
+
+@media (min-width: 1200px) {
   .tile {
-    width: 47%;
+    width: 18%;
+    width: calc(20% - 12px);
+  }
+}
+
+@media (max-width: 899px) {
+  .tile {
+    width: 31%;
+    width: calc(33.333% - 12px);
+  }
+}
+
+@media (max-width: 599px) {
+  .tile {
+    width: 46%;
+    width: calc(50% - 12px);
+  }
+
+  .panel-bar {
+    padding: 28px 16px 12px;
+  }
+
+  .tabs {
+    padding: 0 16px 12px;
+  }
+
+  .panel-note {
+    margin: 0 16px 12px;
+  }
+
+  .content {
+    padding: 2px 16px 20px;
+  }
+
+  .panel-time {
+    display: none;
   }
 }

@@ -13,21 +13,28 @@
 </head>
 <body>
   <div id="frame">
-    <img class="slide" id="slide-a" alt="">
-    <img class="slide" id="slide-b" alt="">
-    <div class="shade"></div>
+    <div class="slide" id="slide-a"><img class="slide-fill hidden" alt=""><img class="slide-photo" alt=""></div>
+    <div class="slide" id="slide-b"><img class="slide-fill hidden" alt=""><img class="slide-photo" alt=""></div>
+    <div class="shade shade-top"></div>
+    <div class="shade shade-bottom"></div>
     <div class="clock" id="clock">
       <div class="clock-time" id="clock-time"></div>
       <div class="clock-date" id="clock-date"></div>
     </div>
     <div class="caption hidden" id="caption"></div>
-    <div class="message hidden" id="message"></div>
+    <div class="message hidden" id="message"><span class="message-text" id="message-text"></span></div>
   </div>
 
   <div class="panel hidden" id="panel">
     <div class="panel-bar">
-      <div class="panel-title">Home</div>
-      <button type="button" class="close-button" id="panel-close">Back to photos</button>
+      <div class="panel-heading">
+        <div class="panel-title">Home</div>
+        <div class="panel-date" id="panel-date"></div>
+      </div>
+      <div class="panel-side">
+        <div class="panel-time" id="panel-time"></div>
+        <button type="button" class="close-button" id="panel-close"><span>Photos</span></button>
+      </div>
     </div>
     <div class="tabs" id="tabs"></div>
     <div class="panel-note hidden" id="panel-note"></div>

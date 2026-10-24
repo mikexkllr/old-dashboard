@@ -1,4 +1,4 @@
-# Portainer: Stacks > Add stack > Repository, compose path "docker-compose.yml",
+# Portainer: Stacks > Add stack > Git Repository, compose path "docker-compose.yml",
 # then fill in the environment variables (see README).
 # On the host instead: cp .env.example .env, edit it, then `docker compose up -d --build`.
 services:

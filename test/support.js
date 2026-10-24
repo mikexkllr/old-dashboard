@@ -176,7 +176,7 @@ function applyService(current, rooms, domain, service, data) {
   const roomLights = data.area_id
     ? (rooms.find((room) => room.id === data.area_id)?.entities ?? []).filter((id) => id.startsWith('light.'))
     : null;
-  const targets = data.entity_id ? [data.entity_id] : roomLights ?? [];
+  const targets = data.entity_id ? [].concat(data.entity_id) : roomLights ?? [];
 
   for (const id of targets) {
     if (!current[id]) return { status: 400, body: { message: `Unknown entity ${id}` } };

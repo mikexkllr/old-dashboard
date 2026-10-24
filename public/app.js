@@ -12,6 +12,7 @@
 
   var RETRY_MS = 60 * 1000;                  // wait before asking Immich again after a failure
   var LOAD_TIMEOUT_MS = 20 * 1000;           // give up on a photo that never finishes loading
+  var FADE_MS = 1500;                        // the .slide.is-front transition in style.css
   var CONTROLS_POLL_MS = 5 * 1000;           // refresh Home Assistant while the panel is open
   var REFRESH_AFTER_COMMAND_MS = 1500;       // Home Assistant can take a moment to report a change
   var STALL_MS = 5 * 60 * 1000;              // reload if no new photo has appeared for this long
@@ -30,6 +31,45 @@
     status: 'Status'
   };
 
+  // Line icons on a 24 x 24 grid, one SVG path each. Solid ones are filled.
+  var ICONS = {
+    bulb: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z',
+    power: 'M12 3v8M7.1 6.3a7.5 7.5 0 1 0 9.8 0',
+    blinds: 'M3 4h18M5 4v12M19 4v12M5 8h14M5 12h14M5 16h14M12 16v4',
+    thermometer: 'M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z',
+    sparkle: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z',
+    lock: 'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z',
+    tv: 'M3 5h18v12H3zM8 21h8M12 17v4',
+    door: 'M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M4 21h16M14.5 12h.01',
+    pulse: 'M3 12h4l3-7 4 14 3-7h4',
+    photos: 'M3 5h18v14H3zM3 16l5-5 5 5 3-3 5 5M15.5 9.5h.01',
+    up: 'M6 15l6-6 6 6',
+    down: 'M6 9l6 6 6-6',
+    minus: 'M6 12h12',
+    plus: 'M12 6v12M6 12h12',
+    stop: 'M7 7h10v10H7z',
+    play: 'M7 4.5v15L19.5 12z'
+  };
+  var SOLID_ICONS = { stop: true, play: true };
+
+  var DOMAIN_ICONS = {
+    'light': 'bulb',
+    'switch': 'power',
+    'fan': 'power',
+    'input_boolean': 'power',
+    'automation': 'power',
+    'group': 'power',
+    'cover': 'blinds',
+    'climate': 'thermometer',
+    'scene': 'sparkle',
+    'script': 'sparkle',
+    'button': 'sparkle',
+    'input_button': 'sparkle',
+    'lock': 'lock',
+    'media_player': 'tv',
+    'binary_sensor': 'door'
+  };
+
   // Defaults. The server's /api/config overrides them.
   var config = {
     intervalSeconds: 60,
@@ -42,8 +82,9 @@
   };
 
   var els = {};
-  var slides = [];
+  var slides = [];      // two layers that take turns: { el, fill, photo }
   var activeSlide = 0;
+  var fadeTimer = null;
   var playlist = [];
   var playlistIndex = 0;
   var hasShownPhoto = false;
@@ -51,11 +92,13 @@
   var lastShownAt = Date.now();
   var slideTimer = null;
   var clockShown = { time: '', date: '' };
+  var serverStartedAt = null;
 
   // Home panel state
   var entities = {};    // latest entity data by entity_id
   var entityUi = {};    // per entity: busy, flash, pending brightness and temperature
   var views = [];       // every tile on screen, so an update can reach all of them
+  var roomViews = [];   // every room heading, for its summary and All off button
   var layoutKey = null; // changes when tiles or rooms have to be rebuilt
   var tabNames = [];
   var tabButtons = {};
@@ -81,6 +124,27 @@
     return el;
   }
 
+  // These write only on a change, so the regular refresh does not make the
+  // old iPad lay out every tile again.
+  function setText(el, text) {
+    if (el.textContent !== text) {
+      el.textContent = text;
+    }
+  }
+
+  function setClass(el, className) {
+    if (el.className !== className) {
+      el.className = className;
+    }
+  }
+
+  function makeIcon(name, className) {
+    var span = createEl('span', (className || 'icon') + (SOLID_ICONS[name] ? ' is-solid' : ''));
+    // The paths are the constants above, so no outside text reaches innerHTML.
+    span.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + ICONS[name] + '"/></svg>';
+    return span;
+  }
+
   function capitalize(text) {
     text = String(text || '');
     return text.charAt(0).toUpperCase() + text.slice(1);
@@ -102,7 +166,7 @@
   }
 
   function setDisabled(el, flag) {
-    if (el && (el.tagName === 'BUTTON' || el.tagName === 'INPUT')) {
+    if (el && (el.tagName === 'BUTTON' || el.tagName === 'INPUT') && el.disabled !== flag) {
       el.disabled = flag;
     }
   }
@@ -146,6 +210,9 @@
           }
         }
       }
+      if (body && body.startedAt) {
+        serverStartedAt = body.startedAt;
+      }
       done();
     });
   }
@@ -161,10 +228,12 @@
     if (time !== clockShown.time) {
       clockShown.time = time;
       els.clockTime.textContent = time;
+      els.panelTime.textContent = time;
     }
     if (date !== clockShown.date) {
       clockShown.date = date;
       els.clockDate.textContent = date;
+      els.panelDate.textContent = date;
     }
   }
 
@@ -182,7 +251,7 @@
   }
 
   function showMessage(text) {
-    els.message.textContent = text || '';
+    els.messageText.textContent = text || '';
     els.message.className = text ? 'message' : 'message hidden';
   }
 
@@ -197,10 +266,26 @@
     return Math.abs(imageRatio - screenRatio) / screenRatio > 0.35 ? 'contain' : 'cover';
   }
 
+  // A photo shown whole gets a blurred copy of itself behind it instead of black
+  // bars. The copy reuses the loaded image, so it costs no second download.
+  function applyFit(slide) {
+    var fit = fitFor(slide.photo);
+    slide.photo.style.objectFit = fit;
+    if (fit === 'contain') {
+      var url = slide.photo.getAttribute('src');
+      if (slide.fill.getAttribute('src') !== url) {
+        slide.fill.src = url;
+      }
+      setClass(slide.fill, 'slide-fill');
+    } else {
+      setClass(slide.fill, 'slide-fill hidden');
+    }
+  }
+
   function refitVisibleSlide() {
     var visible = slides[activeSlide];
-    if (visible && visible.naturalWidth) {
-      visible.style.objectFit = fitFor(visible);
+    if (visible && visible.photo.naturalWidth) {
+      applyFit(visible);
     }
   }
 
@@ -244,10 +329,10 @@
     });
   }
 
-  // Two <img> elements take turns: the next photo loads behind the current one
-  // and then fades in.
+  // The next photo loads into the slide that is not showing, then fades in.
   function loadPhoto(photo) {
     var incoming = slides[1 - activeSlide];
+    var img = incoming.photo;
     var url = 'api/photos/' + encodeURIComponent(photo.id) + '/image';
     var finished = false;
     var guard = null;
@@ -258,8 +343,8 @@
       }
       finished = true;
       clearTimeout(guard);
-      incoming.onload = null;
-      incoming.onerror = null;
+      img.onload = null;
+      img.onerror = null;
       if (ok) {
         showPhoto(incoming, photo);
       } else {
@@ -267,10 +352,10 @@
       }
     }
 
-    incoming.onload = function () {
+    img.onload = function () {
       finish(true);
     };
-    incoming.onerror = function () {
+    img.onerror = function () {
       finish(false);
     };
     guard = setTimeout(function () {
@@ -278,19 +363,34 @@
     }, LOAD_TIMEOUT_MS);
 
     // Showing the same photo again fires no load event, so reuse the loaded one.
-    if (incoming.getAttribute('src') === url && incoming.complete && incoming.naturalWidth > 0) {
+    if (img.getAttribute('src') === url && img.complete && img.naturalWidth > 0) {
       finish(true);
     } else {
-      incoming.src = url;
+      img.src = url;
     }
   }
 
-  function showPhoto(img, photo) {
+  function showPhoto(slide, photo) {
     var outgoing = slides[activeSlide];
-    img.style.objectFit = fitFor(img);
-    img.className = 'slide visible';
-    outgoing.className = 'slide';
+    applyFit(slide);
+
+    // The old photo stays fully visible underneath while the new one fades in
+    // on top, so the picture never dips towards black halfway.
+    outgoing.el.className = 'slide is-back';
+    slide.el.className = 'slide';
+    // Reading a layout value applies the transparent state first, so the
+    // fade always starts from nothing.
+    void slide.el.offsetWidth;
+    slide.el.className = 'slide is-front';
     activeSlide = 1 - activeSlide;
+
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(function () {
+      if (slides[activeSlide] !== outgoing) {
+        outgoing.el.className = 'slide';
+      }
+    }, FADE_MS + 200);
+
     hasShownPhoto = true;
     lastShownAt = Date.now();
     showMessage('');
@@ -315,6 +415,24 @@
     }
   }
 
+  // A redeploy starts a new server with a new start time. Reloading then picks up
+  // the new code. It waits until nobody is using the home panel.
+  function checkForNewServer() {
+    if (panelOpen) {
+      return;
+    }
+    request('GET', 'api/config', null, function (err, body) {
+      if (err || !body || !body.startedAt) {
+        return;
+      }
+      if (serverStartedAt === null) {
+        serverStartedAt = body.startedAt;
+      } else if (body.startedAt !== serverStartedAt) {
+        window.location.reload();
+      }
+    });
+  }
+
   // ---- Home panel -------------------------------------------------------
 
   function setPanelNote(text) {
@@ -325,6 +443,7 @@
   function openPanel() {
     panelOpen = true;
     els.panel.className = 'panel';
+    els.frame.className = 'is-covered';
     if (views.length === 0) {
       setPanelNote('Loading controls...');
     }
@@ -336,6 +455,7 @@
   function closePanel() {
     panelOpen = false;
     els.panel.className = 'panel hidden';
+    els.frame.className = '';
     clearInterval(panelPoll);
     panelPoll = null;
     clearTimeout(panelIdleTimer);
@@ -382,6 +502,7 @@
       for (var v = 0; v < views.length; v++) {
         renderView(views[v]);
       }
+      renderRooms();
     }
 
     var notes = [];
@@ -413,37 +534,33 @@
     els.tabs.innerHTML = '';
     els.content.innerHTML = '';
     views = [];
+    roomViews = [];
     tabNames = [];
     tabButtons = {};
     sections = {};
 
+    // The server sorts by room, so rooms come out in order with No room last.
     var rooms = [];
     var roomInfo = {};
-    var byCategory = {};
+    var categories = {};
     for (var i = 0; i < list.length; i++) {
       var entity = list[i];
       var key = entity.area_id || '';
       if (!roomInfo[key]) {
-        roomInfo[key] = { title: entity.area || 'No room', ids: [], hasLights: false };
+        roomInfo[key] = { title: entity.area || 'No room', entities: [] };
         rooms.push(key);
       }
-      roomInfo[key].ids.push(entity.entity_id);
-      if (entity.category === 'lights') {
-        roomInfo[key].hasLights = true;
-      }
-      if (!byCategory[entity.category]) {
-        byCategory[entity.category] = [];
-      }
-      byCategory[entity.category].push(entity.entity_id);
+      roomInfo[key].entities.push(entity);
+      categories[entity.category] = true;
     }
 
     if (list.length > 0) {
-      addTab('rooms', 'Rooms', buildRoomsSection(rooms, roomInfo));
+      addTab('rooms', 'Rooms', buildSection(rooms, roomInfo, null));
     }
     for (var c = 0; c < CATEGORY_ORDER.length; c++) {
       var name = CATEGORY_ORDER[c];
-      if (byCategory[name]) {
-        addTab(name, CATEGORY_LABELS[name], buildCategorySection(byCategory[name]));
+      if (categories[name]) {
+        addTab(name, CATEGORY_LABELS[name], buildSection(rooms, roomInfo, name));
       }
     }
     showTab(tabNames.indexOf(activeTab) !== -1 ? activeTab : tabNames[0]);
@@ -476,42 +593,83 @@
     els.content.scrollTop = 0;
   }
 
-  function buildRoomsSection(rooms, roomInfo) {
+  // Every tab lists its entities by room, so a light called "Ceiling" still
+  // says which ceiling. A category tab leaves out the other categories.
+  function buildSection(rooms, roomInfo, category) {
     var section = createEl('div', 'section hidden');
     for (var r = 0; r < rooms.length; r++) {
-      var key = rooms[r];
-      var info = roomInfo[key];
-      var room = createEl('div', 'room');
-      var head = createEl('div', 'room-head');
-      head.appendChild(createEl('div', 'room-title', info.title));
-      if (key !== '' && info.hasLights) {
-        head.appendChild(makeRoomLightsOffButton(key));
+      var info = roomInfo[rooms[r]];
+      var ids = [];
+      var lightIds = [];
+      for (var i = 0; i < info.entities.length; i++) {
+        var entity = info.entities[i];
+        if (category === null || entity.category === category) {
+          ids.push(entity.entity_id);
+          if (entity.domain === 'light') {
+            lightIds.push(entity.entity_id);
+          }
+        }
       }
-      room.appendChild(head);
-
-      var tiles = createEl('div', 'tiles');
-      for (var i = 0; i < info.ids.length; i++) {
-        tiles.appendChild(buildView(info.ids[i]).el);
+      if (ids.length > 0) {
+        section.appendChild(buildRoom(rooms[r], info.title, ids, lightIds));
       }
-      room.appendChild(tiles);
-      section.appendChild(room);
     }
     return section;
   }
 
-  function buildCategorySection(ids) {
-    var section = createEl('div', 'section hidden');
+  function buildRoom(areaId, title, ids, lightIds) {
+    var room = createEl('div', 'room');
+    var head = createEl('div', 'room-head');
+    var titles = createEl('div', 'room-titles');
+    titles.appendChild(createEl('div', 'room-title', title));
+    var roomView = { lightIds: lightIds, summaryEl: createEl('div', 'room-summary'), offButton: null };
+    titles.appendChild(roomView.summaryEl);
+    head.appendChild(titles);
+    if (areaId !== '' && lightIds.length > 0) {
+      roomView.offButton = makeRoomLightsOffButton(areaId);
+      head.appendChild(roomView.offButton);
+    }
+    room.appendChild(head);
+    roomViews.push(roomView);
+
     var tiles = createEl('div', 'tiles');
     for (var i = 0; i < ids.length; i++) {
       tiles.appendChild(buildView(ids[i]).el);
     }
-    section.appendChild(tiles);
-    return section;
+    room.appendChild(tiles);
+    renderRoom(roomView);
+    return room;
+  }
+
+  // "2 lights on" under the room name. All off only shows while a light is on.
+  function renderRoom(roomView) {
+    if (roomView.lightIds.length === 0) {
+      return;
+    }
+    var on = 0;
+    for (var i = 0; i < roomView.lightIds.length; i++) {
+      var entity = entities[roomView.lightIds[i]];
+      if (entity && entity.on) {
+        on++;
+      }
+    }
+    setText(roomView.summaryEl, on === 0 ? 'All lights off' : on === 1 ? '1 light on' : on + ' lights on');
+    if (roomView.offButton) {
+      setClass(roomView.offButton, on > 0 ? 'room-off' : 'room-off hidden');
+    }
+  }
+
+  function renderRooms() {
+    for (var i = 0; i < roomViews.length; i++) {
+      renderRoom(roomViews[i]);
+    }
   }
 
   function makeRoomLightsOffButton(areaId) {
-    var button = createEl('button', 'room-off', 'Lights off');
+    var button = createEl('button', 'room-off');
     button.type = 'button';
+    button.appendChild(makeIcon('power'));
+    button.appendChild(createEl('span', null, 'All off'));
     button.onclick = function () {
       lightsOffInRoom(areaId, button);
     };
@@ -555,6 +713,13 @@
     return 'info';
   }
 
+  function iconFor(entity) {
+    if (DOMAIN_ICONS.hasOwnProperty(entity.domain)) {
+      return DOMAIN_ICONS[entity.domain];
+    }
+    return 'pulse';
+  }
+
   function uiFor(entityId) {
     if (!entityUi[entityId]) {
       entityUi[entityId] = { busy: false, flash: '', pendingBrightness: undefined, pendingTarget: undefined };
@@ -568,87 +733,127 @@
     };
   }
 
-  function makeActionButton(entityId, command, label, view) {
-    var button = createEl('button', 'tile-action', label);
+  function makeIconButton(icon, label, onclick, view) {
+    var button = createEl('button', 'tile-action');
     button.type = 'button';
-    button.onclick = makeCommand(entityId, command);
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.appendChild(makeIcon(icon));
+    button.onclick = onclick;
     view.controls.push(button);
     return button;
   }
 
-  function makeStepButton(entityId, direction, label, view) {
-    var button = createEl('button', 'tile-action', label);
-    button.type = 'button';
-    button.onclick = function () {
+  function makeActionButton(entityId, command, icon, label, view) {
+    return makeIconButton(icon, label, makeCommand(entityId, command), view);
+  }
+
+  function makeStepButton(entityId, direction, view) {
+    return makeIconButton(direction < 0 ? 'minus' : 'plus', direction < 0 ? 'Lower' : 'Raise', function () {
       stepTemperature(entityId, direction);
-    };
-    view.controls.push(button);
-    return button;
+    }, view);
   }
 
+  function makeSwitch() {
+    var track = createEl('span', 'switch');
+    track.appendChild(createEl('span', 'switch-knob'));
+    return track;
+  }
+
+  function makeSlider(entityId, view) {
+    var box = createEl('div', 'slider');
+    var track = createEl('div', 'slider-track');
+    view.fillEl = createEl('div', 'slider-fill');
+    track.appendChild(view.fillEl);
+    box.appendChild(track);
+
+    var slider = createEl('input', 'slider-input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '100';
+    slider.step = '1';
+    slider.setAttribute('aria-label', 'Brightness');
+    slider.oninput = function () {
+      view.sliding = true;
+      uiFor(entityId).pendingBrightness = parseInt(slider.value, 10);
+      renderView(view);
+    };
+    slider.onchange = function () {
+      view.sliding = false;
+      commandEntity(entityId, 'brightness', parseInt(slider.value, 10));
+    };
+    box.appendChild(slider);
+    view.sliderEl = slider;
+    view.controls.push(slider);
+    return box;
+  }
+
+  // Every tile has a head (icon, name, status) at the top and a foot at the
+  // bottom: a switch, slider, buttons or value, depending on the kind.
   function buildView(entityId) {
-    var kind = kindOf(entities[entityId]);
+    var entity = entities[entityId];
+    var kind = kindOf(entity);
     var view = {
       entityId: entityId,
       kind: kind,
       el: null,
       nameEl: createEl('div', 'tile-name'),
-      statusEl: createEl('div', 'tile-status'),
+      statusEl: createEl('div', kind === 'info' ? 'tile-value' : 'tile-status'),
+      valueEl: null,
       sliderEl: null,
+      fillEl: null,
       sliding: false,
       controls: []
     };
 
+    var head = createEl('div', 'tile-head');
+    head.appendChild(makeIcon(iconFor(entity), 'icon tile-icon'));
+    var text = createEl('div', 'tile-text');
+    text.appendChild(view.nameEl);
+    if (kind !== 'info') {
+      text.appendChild(view.statusEl);
+    }
+    head.appendChild(text);
+    var foot = createEl('div', 'tile-foot');
+
     if (kind === 'toggle' || kind === 'run') {
+      // The whole tile is the button.
       view.el = createEl('button', 'tile');
       view.el.type = 'button';
-      view.el.appendChild(view.nameEl);
-      view.el.appendChild(view.statusEl);
       view.el.onclick = makeCommand(entityId, kind === 'run' ? 'run' : 'toggle');
       view.controls.push(view.el);
+      foot.appendChild(kind === 'run' ? makeIcon('play', 'icon run-mark') : makeSwitch());
+      view.el.appendChild(head);
+      view.el.appendChild(foot);
     } else if (kind === 'light') {
+      // A button under the whole tile toggles; the slider sits on top of it.
       view.el = createEl('div', 'tile');
       var main = createEl('button', 'tile-main');
       main.type = 'button';
-      main.appendChild(view.nameEl);
-      main.appendChild(view.statusEl);
       main.onclick = makeCommand(entityId, 'toggle');
+      main.appendChild(head);
+      view.controls.push(main);
+      foot.appendChild(makeSlider(entityId, view));
       view.el.appendChild(main);
-
-      var slider = createEl('input', 'slider');
-      slider.type = 'range';
-      slider.min = '0';
-      slider.max = '100';
-      slider.step = '1';
-      slider.oninput = function () {
-        view.sliding = true;
-        var ui = uiFor(entityId);
-        ui.pendingBrightness = parseInt(slider.value, 10);
-        view.statusEl.textContent = statusText(entities[entityId], ui);
-      };
-      slider.onchange = function () {
-        view.sliding = false;
-        commandEntity(entityId, 'brightness', parseInt(slider.value, 10));
-      };
-      view.el.appendChild(slider);
-      view.sliderEl = slider;
-      view.controls.push(main, slider);
+      view.el.appendChild(foot);
     } else {
       view.el = createEl('div', 'tile');
-      view.el.appendChild(view.nameEl);
-      view.el.appendChild(view.statusEl);
+      view.el.appendChild(head);
       if (kind === 'cover') {
-        var covers = createEl('div', 'tile-actions');
-        covers.appendChild(makeActionButton(entityId, 'open', 'Open', view));
-        covers.appendChild(makeActionButton(entityId, 'stop', 'Stop', view));
-        covers.appendChild(makeActionButton(entityId, 'close', 'Close', view));
-        view.el.appendChild(covers);
+        foot.className = 'tile-foot tile-buttons';
+        foot.appendChild(makeActionButton(entityId, 'open', 'up', 'Open', view));
+        foot.appendChild(makeActionButton(entityId, 'stop', 'stop', 'Stop', view));
+        foot.appendChild(makeActionButton(entityId, 'close', 'down', 'Close', view));
       } else if (kind === 'climate') {
-        var climate = createEl('div', 'tile-actions');
-        climate.appendChild(makeStepButton(entityId, -1, '−', view));
-        climate.appendChild(makeStepButton(entityId, 1, '+', view));
-        view.el.appendChild(climate);
+        foot.className = 'tile-foot tile-stepper';
+        foot.appendChild(makeStepButton(entityId, -1, view));
+        view.valueEl = createEl('div', 'stepper-value');
+        foot.appendChild(view.valueEl);
+        foot.appendChild(makeStepButton(entityId, 1, view));
+      } else {
+        foot.appendChild(view.statusEl);
       }
+      view.el.appendChild(foot);
     }
 
     views.push(view);
@@ -663,6 +868,18 @@
       return ui.pendingBrightness;
     }
     return entity.brightness;
+  }
+
+  // A light being dragged up from 0 already looks on.
+  function isLit(entity, ui) {
+    if (ui.pendingBrightness !== undefined) {
+      return ui.pendingBrightness > 0;
+    }
+    return entity.on;
+  }
+
+  function targetShown(entity, ui) {
+    return ui.pendingTarget !== undefined ? ui.pendingTarget : entity.climate.target;
   }
 
   function statusText(entity, ui) {
@@ -689,8 +906,7 @@
       return humanize(entity.state) + (entity.position !== null ? ' · ' + entity.position + '%' : '');
     }
     if (kind === 'climate') {
-      var target = ui.pendingTarget !== undefined ? ui.pendingTarget : entity.climate.target;
-      var text = 'Target ' + formatTemp(target, entity.climate);
+      var text = humanize(entity.state);
       if (entity.climate.current !== null) {
         text += ' · now ' + formatTemp(entity.climate.current, entity.climate);
       }
@@ -706,11 +922,13 @@
     }
     var ui = uiFor(view.entityId);
 
-    var classes = ['tile', 'tile-' + view.kind];
-    if (view.kind === 'toggle' || view.kind === 'light') {
+    var classes = ['tile', 'tile-' + view.kind, 'cat-' + entity.category];
+    if (view.kind === 'light') {
+      classes.push(isLit(entity, ui) ? 'is-on' : 'is-off');
+    } else if (view.kind === 'toggle') {
       classes.push(entity.on ? 'is-on' : 'is-off');
-    } else if (view.kind === 'info') {
-      classes.push('is-info');
+    } else if ((view.kind === 'cover' && entity.on) || (view.kind === 'climate' && entity.state !== 'off')) {
+      classes.push('is-active');
     }
     if (!entity.available) {
       classes.push('is-unavailable');
@@ -721,10 +939,13 @@
     if (ui.busy) {
       classes.push('is-busy');
     }
-    view.el.className = classes.join(' ');
+    setClass(view.el, classes.join(' '));
 
-    view.nameEl.textContent = entity.name;
-    view.statusEl.textContent = ui.flash || statusText(entity, ui);
+    setText(view.nameEl, entity.name);
+    setText(view.statusEl, ui.flash || statusText(entity, ui));
+    if (view.valueEl) {
+      setText(view.valueEl, formatTemp(targetShown(entity, ui), entity.climate));
+    }
 
     var disabled = !entity.available || ui.busy;
     for (var i = 0; i < view.controls.length; i++) {
@@ -733,8 +954,11 @@
 
     // Leave the slider where it is when Home Assistant reports no level.
     var level = brightnessShown(entity, ui);
-    if (view.sliderEl && !view.sliding && level !== null && level !== undefined) {
-      view.sliderEl.value = String(level);
+    if (view.sliderEl && level !== null && level !== undefined) {
+      if (!view.sliding) {
+        view.sliderEl.value = String(level);
+      }
+      view.fillEl.style.width = level + '%';
     }
   }
 
@@ -744,6 +968,7 @@
         renderView(views[i]);
       }
     }
+    renderRooms();
   }
 
   function commandEntity(entityId, command, value) {
@@ -794,12 +1019,16 @@
       return;
     }
     var ui = uiFor(entityId);
-    var current = ui.pendingTarget !== undefined ? ui.pendingTarget : entity.climate.target;
-    var next = roundTemp(current + direction * entity.climate.step);
+    var next = roundTemp(targetShown(entity, ui) + direction * entity.climate.step);
     if (next < entity.climate.min || next > entity.climate.max) {
       return;
     }
     commandEntity(entityId, 'temperature', next);
+  }
+
+  function slideParts(el) {
+    var images = el.getElementsByTagName('img');
+    return { el: el, fill: images[0], photo: images[1] };
   }
 
   function findElements() {
@@ -809,16 +1038,20 @@
     els.clockDate = byId('clock-date');
     els.caption = byId('caption');
     els.message = byId('message');
+    els.messageText = byId('message-text');
     els.panel = byId('panel');
+    els.panelTime = byId('panel-time');
+    els.panelDate = byId('panel-date');
     els.panelClose = byId('panel-close');
     els.panelNote = byId('panel-note');
     els.tabs = byId('tabs');
     els.content = byId('content');
-    slides = [byId('slide-a'), byId('slide-b')];
+    slides = [slideParts(byId('slide-a')), slideParts(byId('slide-b'))];
   }
 
   function init() {
     findElements();
+    els.panelClose.insertBefore(makeIcon('photos'), els.panelClose.firstChild);
     // iOS only sends click events for elements with a click handler, so the
     // handler is set as a property rather than with addEventListener.
     els.frame.onclick = function () {
@@ -827,6 +1060,7 @@
       }
     };
     els.panelClose.onclick = closePanel;
+    // This touch handler also lets iOS show the :active press states.
     els.panel.ontouchstart = function () {
       if (panelOpen) {
         touchPanel();
@@ -842,6 +1076,7 @@
       renderClock();
       setInterval(renderClock, 1000);
       setInterval(watchdog, 30 * 1000);
+      setInterval(checkForNewServer, 60 * 1000);
       showNextSlide();
     });
   }

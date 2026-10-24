@@ -375,7 +375,32 @@ describe('Home Assistant controls', () => {
     assert.equal(res.status, 200);
     assert.equal(ha.states['light.hall'].state, 'off');
     const call = ha.calls.findLast((request) => request.path === '/api/services/light/turn_off');
-    assert.deepEqual(JSON.parse(call.body), { area_id: 'living_room' });
+    assert.deepEqual(JSON.parse(call.body), { entity_id: ['light.hall'] });
+  });
+
+  test('turning off a room leaves its hidden lights alone', async () => {
+    const hiddenHa = await startHomeAssistant();
+    const hiddenDashboard = await startDashboard({ HA_URL: hiddenHa.url, HA_TOKEN, HA_HIDE_ENTITIES: 'light.kitchen' });
+    try {
+      hiddenHa.states['light.kitchen'].state = 'on';
+      assert.equal((await post(`${hiddenDashboard.url}/api/ha/rooms/kitchen/lights-off`, {})).status, 200);
+      assert.equal(hiddenHa.states['light.kitchen'].state, 'on');
+      const call = hiddenHa.calls.findLast((request) => request.path === '/api/services/light/turn_off');
+      assert.deepEqual(JSON.parse(call.body), { entity_id: ['light.broken'] });
+
+      // A room whose lights are all hidden gets no service call at all.
+      const before = hiddenHa.calls.length;
+      const bedroom = await startDashboard({ HA_URL: hiddenHa.url, HA_TOKEN, HA_HIDE_ENTITIES: 'light.bedside' });
+      try {
+        assert.equal((await post(`${bedroom.url}/api/ha/rooms/bedroom/lights-off`, {})).status, 200);
+        assert.equal(hiddenHa.calls.slice(before).some((request) => request.path.startsWith('/api/services/')), false);
+      } finally {
+        await bedroom.close();
+      }
+    } finally {
+      await hiddenDashboard.close();
+      await hiddenHa.close();
+    }
   });
 
   test('rejects rooms that do not exist and malformed room ids', async () => {
@@ -518,6 +543,7 @@ describe('serving the frontend and the basic API', () => {
     assert.equal(config.showClock, true);
     assert.equal(config.photosEnabled, false);
     assert.equal(config.homeAssistantEnabled, false);
+    assert.match(config.startedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   });
 
   test('never serves files outside public/', async () => {

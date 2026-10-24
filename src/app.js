@@ -19,10 +19,12 @@ const PHOTOS_OFF = 'Photos are off. Set IMMICH_URL and IMMICH_API_KEY on the ser
 const HOME_OFF = 'Home Assistant is off. Set HA_URL and HA_TOKEN on the server.';
 
 export function createApp({ config, immich, homeAssistant, publicDir = DEFAULT_PUBLIC_DIR, logger = console }) {
+  // Lets the page notice when the server was restarted, for example by a redeploy.
+  const startedAt = new Date().toISOString();
   return createServer(async (req, res) => {
     try {
       const { pathname } = new URL(req.url, 'http://localhost');
-      await route(req, res, pathname, { config, immich, homeAssistant, publicDir });
+      await route(req, res, pathname, { config, immich, homeAssistant, publicDir, startedAt });
     } catch (err) {
       if (err instanceof HttpError) {
         sendJson(res, err.status, { error: err.message }, err.headers);
@@ -34,7 +36,7 @@ export function createApp({ config, immich, homeAssistant, publicDir = DEFAULT_P
   });
 }
 
-async function route(req, res, pathname, { config, immich, homeAssistant, publicDir }) {
+async function route(req, res, pathname, { config, immich, homeAssistant, publicDir, startedAt }) {
   if (pathname === '/api/health') {
     requireMethod(req, 'GET');
     return sendJson(res, 200, { ok: true });
@@ -46,6 +48,7 @@ async function route(req, res, pathname, { config, immich, homeAssistant, public
       ...config.frame,
       photosEnabled: immich.enabled,
       homeAssistantEnabled: homeAssistant.enabled,
+      startedAt,
     });
   }
 

@@ -397,11 +397,18 @@ export function createHomeAssistantClient({
     return describeEntity(updated ?? state, options) ?? entity;
   }
 
+  // Turns off the lights the panel shows in the room. Naming them, rather than
+  // sending the area, keeps lights in HA_HIDE_ENTITIES out of it.
   async function lightsOffInArea(areaId) {
     if (!AREA_ID.test(areaId)) throw new HttpError(400, 'Invalid room id');
-    const rooms = await cachedRooms();
+    const [states, rooms] = await Promise.all([cachedStates(), cachedRooms()]);
     if (!rooms.rooms.some((room) => room.id === areaId)) throw new HttpError(404, 'Room not found');
-    await callService({ domain: 'light', service: 'turn_off', data: { area_id: areaId } });
+    const { entities } = buildControls({ states, areas: rooms.byEntity, included, hidden });
+    const lights = entities
+      .filter((entity) => entity.area_id === areaId && entity.domain === 'light')
+      .map((entity) => entity.entity_id);
+    if (lights.length === 0) return;
+    await callService({ domain: 'light', service: 'turn_off', data: { entity_id: lights } });
     cachedStates.invalidate();
   }
 
