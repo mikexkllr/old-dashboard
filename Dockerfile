@@ -6,7 +6,13 @@ COPY package.json ./
 COPY src ./src
 COPY public ./public
 
+# The settings menu saves its changes here. docker-compose.yml keeps this
+# folder in a volume, so they survive updates. A new volume takes over the
+# folder's owner, so the node user can write to it.
+RUN mkdir /data && chown node:node /data
+
 ENV PORT=3000
+ENV SETTINGS_FILE=/data/settings.json
 EXPOSE 3000
 USER node
 

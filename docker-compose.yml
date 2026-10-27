@@ -11,6 +11,9 @@ services:
       IMMICH_URL: ${IMMICH_URL:-}
       IMMICH_API_KEY: ${IMMICH_API_KEY:-}
       IMMICH_ALBUM_IDS: ${IMMICH_ALBUM_IDS:-}
+      IMMICH_PERSON_IDS: ${IMMICH_PERSON_IDS:-}
+      IMMICH_FROM_YEAR: ${IMMICH_FROM_YEAR:-}
+      IMMICH_TO_YEAR: ${IMMICH_TO_YEAR:-}
       IMMICH_FAVORITES_ONLY: ${IMMICH_FAVORITES_ONLY:-false}
       IMMICH_PLAYLIST_SIZE: ${IMMICH_PLAYLIST_SIZE:-200}
       HA_URL: ${HA_URL:-}
@@ -22,8 +25,14 @@ services:
       SHOW_CLOCK: ${SHOW_CLOCK:-true}
       SHOW_CAPTIONS: ${SHOW_CAPTIONS:-true}
       PANEL_IDLE_SECONDS: ${PANEL_IDLE_SECONDS:-60}
+    # The settings menu saves its changes in this volume, so they survive redeploys.
+    volumes:
+      - settings:/data
     read_only: true
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  settings:

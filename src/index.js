@@ -3,6 +3,7 @@ import { loadConfig } from './config.js';
 import { localNameHint } from './errors.js';
 import { createHomeAssistantClient } from './homeassistant.js';
 import { createImmichClient } from './immich.js';
+import { createSettingsStore, settingsDefaults } from './settings.js';
 
 let config;
 try {
@@ -14,7 +15,9 @@ try {
 
 const immich = createImmichClient(config.immich);
 const homeAssistant = createHomeAssistantClient(config.homeAssistant);
-const server = createApp({ config, immich, homeAssistant });
+const settings = createSettingsStore({ defaults: settingsDefaults(config), file: config.settingsFile });
+await settings.load();
+const server = createApp({ config, immich, homeAssistant, settings });
 
 if (immich.enabled) {
   const albums = config.immich.albumIds.length
@@ -30,6 +33,13 @@ if (homeAssistant.enabled) {
   console.log(`Home Assistant: ${config.homeAssistant.url} (${includeIds.length} extra entities, ${hideIds.length} hidden)`);
 } else {
   console.log('Home Assistant: off (set HA_URL and HA_TOKEN to enable)');
+}
+
+const { changed, problem } = settings.state();
+if (config.settingsFile) {
+  console.log(`Settings: ${config.settingsFile} (${changed.length} changed in the settings menu)`);
+} else {
+  console.warn(`Warning: ${problem}`);
 }
 
 for (const [variable, url] of [['IMMICH_URL', config.immich.url], ['HA_URL', config.homeAssistant.url]]) {

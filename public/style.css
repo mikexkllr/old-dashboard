@@ -77,11 +77,14 @@ button span {
 
 /* A grey wash shows a press on any background colour. */
 .close-button:active,
+.round-button:active,
 .tab:active,
-.room-off:active,
+.room-button:active,
 .tile-action:active,
 button.tile:active,
-.tile-main:active {
+.tile-main:active,
+.setting-row:active,
+.segment:active {
   background-image: -webkit-linear-gradient(top, rgba(128, 128, 128, 0.18), rgba(128, 128, 128, 0.18));
   background-image: linear-gradient(rgba(128, 128, 128, 0.18), rgba(128, 128, 128, 0.18));
 }
@@ -352,6 +355,16 @@ button.tile:active,
   margin-right: 8px;
 }
 
+.round-button {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin-right: 10px;
+  padding: 0;
+  border-radius: 22px;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
 .tabs {
   flex: none;
   padding: 0 28px 16px;
@@ -415,9 +428,17 @@ button.tile:active,
   margin-bottom: 10px;
 }
 
+.room-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .room-title {
+  overflow: hidden;
   font-size: 21px;
   font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .room-summary {
@@ -426,25 +447,84 @@ button.tile:active,
   color: rgba(235, 235, 245, 0.55);
 }
 
-.room-off {
+/* The bar for every light in the home, above the rooms. */
+.room-all {
+  margin-bottom: 22px;
+}
+
+.room-all .room-head {
+  margin-bottom: 0;
+  padding: 10px 12px 10px 18px;
+  border-radius: 20px;
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.room-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: 12px;
+}
+
+.room-button {
   flex: none;
   height: 36px;
+  margin-left: 8px;
   padding: 0 14px 0 10px;
   border-radius: 18px;
   background-color: rgba(255, 255, 255, 0.12);
   font-size: 15px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.room-off .icon {
+.room-button .icon {
   width: 18px;
   height: 18px;
   margin-right: 6px;
   color: #ffb340;
 }
 
-.room-off:disabled {
-  opacity: 0.5;
+/* Colour buttons: a round swatch of the colour, or a rainbow while there is none. */
+.room-color,
+.color-button {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 4px;
+  border-radius: 18px;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.room-color {
+  margin-left: 8px;
+}
+
+.color-button {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+}
+
+.tile.is-on .color-button {
+  background-color: rgba(60, 60, 67, 0.12);
+}
+
+.color-button:disabled {
+  opacity: 0.4;
+}
+
+.swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.swatch.is-rainbow {
+  background-image: -webkit-linear-gradient(315deg, #ff453a, #ffd60a, #30d158, #64d2ff, #0a84ff, #bf5af2);
+  background-image: linear-gradient(135deg, #ff453a, #ffd60a, #30d158, #64d2ff, #0a84ff, #bf5af2);
 }
 
 /* Tiles: a grid built from wrapping flex items. The negative margin cancels
@@ -745,6 +825,11 @@ button.tile:active,
   height: 36px;
 }
 
+/* Lights with colours keep room for the colour button beside the slider. */
+.has-color .slider {
+  right: 44px;
+}
+
 .slider-track {
   position: absolute;
   top: 50%;
@@ -799,6 +884,361 @@ button.tile:active,
   background: #d8d8dc;
 }
 
+/* Colour sheet: a card over the panel with colour choices for a light or a room */
+
+.sheet-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-animation: panel-in 0.2s ease-out;
+  animation: panel-in 0.2s ease-out;
+}
+
+.sheet {
+  box-sizing: border-box;
+  width: 92%;
+  max-width: 600px;
+  max-height: 92%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px 22px 24px;
+  border-radius: 24px;
+  background: rgb(36, 38, 44);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sheet-swatch {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin-right: 14px;
+}
+
+.sheet-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 12px;
+}
+
+.sheet-title {
+  overflow: hidden;
+  font-size: 22px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sheet-sub {
+  margin-top: 2px;
+  font-size: 14px;
+  color: rgba(235, 235, 245, 0.6);
+}
+
+.sheet-note {
+  margin: 8px 0 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(255, 69, 58, 0.2);
+  color: #ffd6d2;
+  font-size: 15px;
+}
+
+.sheet-label {
+  margin: 18px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(235, 235, 245, 0.6);
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 -6px;
+}
+
+.preset {
+  width: 68px;
+  margin: 0 3px 6px;
+  padding: 4px 0;
+  border-radius: 14px;
+  background: transparent;
+  text-align: center;
+}
+
+.preset .swatch {
+  width: 50px;
+  height: 50px;
+  margin: 0 auto;
+  -webkit-transition: box-shadow 0.15s;
+  transition: box-shadow 0.15s;
+}
+
+.preset.is-selected .swatch {
+  box-shadow: 0 0 0 3px rgb(36, 38, 44), 0 0 0 6px #f5f5f7;
+}
+
+.preset-label {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: rgba(235, 235, 245, 0.8);
+}
+
+.sheet-slider {
+  position: relative;
+  height: 44px;
+}
+
+.sheet-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 14px;
+}
+
+.track-hue {
+  background-image: -webkit-linear-gradient(left, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  background-image: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
+.sheet-slider .slider-input {
+  height: 44px;
+}
+
+.sheet-slider .slider-input::-webkit-slider-runnable-track {
+  height: 44px;
+}
+
+.sheet-slider .slider-input::-webkit-slider-thumb {
+  width: 34px;
+  height: 34px;
+  margin-top: 5px;
+  border-radius: 17px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45), 0 0 0 2px rgba(255, 255, 255, 0.9);
+}
+
+/* Settings: grouped lists over the home panel */
+
+.panel.settings {
+  z-index: 2;
+}
+
+.panel.is-under {
+  visibility: hidden;
+}
+
+.settings .content {
+  padding-bottom: 40px;
+}
+
+.settings-group {
+  max-width: 760px;
+  margin: 0 auto 28px;
+}
+
+.settings-title {
+  margin: 0 16px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(235, 235, 245, 0.6);
+}
+
+.settings-hint {
+  margin: 8px 16px 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: rgba(235, 235, 245, 0.55);
+}
+
+.settings-list {
+  overflow: hidden;
+  border-radius: 16px;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.setting-row {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 16px;
+  border-radius: 0;
+  background-color: transparent;
+  color: #f5f5f7;
+  font-size: 17px;
+  text-align: left;
+}
+
+.setting-row + .setting-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.setting-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 0;
+  line-height: 1.3;
+}
+
+.setting-detail {
+  flex: none;
+  margin-left: 12px;
+  font-size: 15px;
+  color: rgba(235, 235, 245, 0.55);
+}
+
+.setting-info {
+  font-size: 15px;
+  color: rgba(235, 235, 245, 0.7);
+}
+
+.setting-info.is-problem {
+  color: #ffd28a;
+}
+
+.setting-row.is-danger .setting-label {
+  color: #ff6961;
+  text-align: center;
+}
+
+.setting-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-left: 14px;
+  color: #0a84ff;
+  visibility: hidden;
+}
+
+.setting-row.is-checked .setting-check {
+  visibility: visible;
+}
+
+.setting-chevron {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  color: rgba(235, 235, 245, 0.5);
+  -webkit-transition: -webkit-transform 0.2s;
+  transition: transform 0.2s;
+}
+
+.setting-row.is-open .setting-chevron {
+  -webkit-transform: rotate(180deg);
+  transform: rotate(180deg);
+}
+
+/* The switch drawn for the tiles, as a part of a settings row */
+.setting-row .switch {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  flex: none;
+  margin-left: 14px;
+}
+
+.setting-row.is-on .switch {
+  background-color: #30d158;
+}
+
+.setting-row.is-on .switch-knob {
+  -webkit-transform: translateX(18px);
+  transform: translateX(18px);
+}
+
+/* A native picker, with a chevron drawn over its right end */
+.select-wrap {
+  position: relative;
+  flex: none;
+  margin-left: 12px;
+}
+
+.setting-select {
+  height: 38px;
+  margin: 0;
+  padding: 0 34px 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+  font: inherit;
+  font-size: 16px;
+  -webkit-appearance: none;
+}
+
+.select-icon {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  pointer-events: none;
+  color: rgba(235, 235, 245, 0.7);
+}
+
+.segments {
+  flex: none;
+  display: flex;
+  margin: 2px 0 2px 12px;
+  padding: 2px;
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.segment {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background-color: transparent;
+  color: rgba(235, 235, 245, 0.85);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.segment.is-active {
+  background-color: #f5f5f7;
+  color: #1c1c1e;
+}
+
+.settings-footer {
+  max-width: 728px;
+  margin: 0 auto;
+  padding: 0 16px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: rgba(235, 235, 245, 0.55);
+}
+
+.settings-footer.is-problem {
+  color: #ffd28a;
+}
+
 /* Wider screens get five tiles a row, narrower ones three or two. */
 
 @media (min-width: 1200px) {
@@ -839,5 +1279,34 @@ button.tile:active,
 
   .panel-time {
     display: none;
+  }
+
+  /* Room buttons keep only their icons on a phone. */
+  .room-button {
+    padding: 0 9px;
+  }
+
+  .room-button-label {
+    display: none;
+  }
+
+  .room-button .icon {
+    margin-right: 0;
+  }
+
+  .segments {
+    margin-left: 0;
+  }
+
+  .segment {
+    padding: 0 10px;
+  }
+
+  .sheet {
+    padding: 16px 14px 20px;
+  }
+
+  .preset {
+    width: 62px;
   }
 }

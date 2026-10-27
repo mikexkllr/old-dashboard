@@ -4,6 +4,7 @@ import {
   buildControls,
   classify,
   describeEntity,
+  lightGroupServices,
   normalizeValue,
   parseRooms,
   ROOMS_TEMPLATE,
@@ -83,6 +84,88 @@ test('only dimmable lights get a brightness command', () => {
   assert.deepEqual(classify(haState('light.b', 'on', { supported_color_modes: ['onoff'] })).commands, ['toggle']);
   // Older lights report a brightness value without listing their colour modes.
   assert.deepEqual(classify(haState('light.c', 'on', { brightness: 100 })).commands, ['toggle', 'brightness']);
+});
+
+test('colour lights get colour and white-tone commands, and white-tone lights get white tones only', () => {
+  for (const mode of ['hs', 'xy', 'rgb', 'rgbw', 'rgbww']) {
+    assert.deepEqual(
+      classify(haState('light.c', 'on', { supported_color_modes: [mode] })).commands,
+      ['toggle', 'brightness', 'color', 'color_temp'],
+      mode,
+    );
+  }
+  assert.deepEqual(
+    classify(haState('light.w', 'on', { supported_color_modes: ['color_temp'] })).commands,
+    ['toggle', 'brightness', 'color_temp'],
+  );
+  assert.deepEqual(
+    classify(haState('light.both', 'on', { supported_color_modes: ['color_temp', 'hs'] })).commands,
+    ['toggle', 'brightness', 'color', 'color_temp'],
+  );
+});
+
+test('describes the colour a light shows and its white range', () => {
+  const on = describeEntity(haState('light.w', 'on', {
+    supported_color_modes: ['color_temp'],
+    color_mode: 'color_temp',
+    color_temp_kelvin: 3000,
+    rgb_color: [255, 180, 107],
+    min_color_temp_kelvin: 2200,
+    max_color_temp_kelvin: 6500,
+  }));
+  assert.deepEqual(on.color, { rgb: [255, 180, 107], kelvin: 3000, minKelvin: 2200, maxKelvin: 6500, clampKelvin: true });
+
+  // Off lights report no colour, and colour lights without a white range get Home Assistant's defaults.
+  const off = describeEntity(haState('light.c', 'off', { supported_color_modes: ['hs'], rgb_color: [1, 2, 3] }));
+  assert.deepEqual(off.color, { rgb: null, kelvin: null, minKelvin: 2000, maxKelvin: 6535, clampKelvin: false });
+});
+
+test('maps colour commands to light.turn_on, keeping white tones in range', () => {
+  const both = describeEntity(haState('light.b', 'on', {
+    supported_color_modes: ['color_temp', 'rgb'],
+    min_color_temp_kelvin: 2700,
+    max_color_temp_kelvin: 6500,
+  }));
+  assert.deepEqual(serviceFor(both, 'color', [255, 0, 0]), {
+    domain: 'light',
+    service: 'turn_on',
+    data: { entity_id: 'light.b', rgb_color: [255, 0, 0] },
+  });
+  assert.equal(normalizeValue(both, 'color_temp', 9000), 6500);
+  assert.equal(normalizeValue(both, 'color_temp', 3333.4), 3333);
+  assert.throws(() => normalizeValue(both, 'color_temp', 500), /1500 to 10000/);
+  assert.throws(() => normalizeValue(both, 'color', [255, 0]), /\[red, green, blue\]/);
+  assert.throws(() => normalizeValue(both, 'color', [255, 0, 1.5]), /whole number/);
+
+  const rgbOnly = describeEntity(haState('light.c', 'on', { supported_color_modes: ['rgb'] }));
+  assert.equal(normalizeValue(rgbOnly, 'color_temp', 2000), 2000, 'Home Assistant converts it, so nothing is clamped');
+});
+
+test('group commands give each light only what it supports', () => {
+  const describe = (id, attributes) => describeEntity(haState(id, 'off', attributes));
+  const lights = [
+    describe('light.plain', { supported_color_modes: ['onoff'] }),
+    describe('light.rgb', { supported_color_modes: ['rgb'] }),
+    describe('light.warm', { supported_color_modes: ['color_temp'], min_color_temp_kelvin: 2700, max_color_temp_kelvin: 6500 }),
+    describe('light.warm2', { supported_color_modes: ['color_temp'], min_color_temp_kelvin: 2700, max_color_temp_kelvin: 5000 }),
+  ];
+  assert.deepEqual(lightGroupServices(lights, 'off'), [
+    { domain: 'light', service: 'turn_off', data: { entity_id: ['light.plain', 'light.rgb', 'light.warm', 'light.warm2'] } },
+  ]);
+  assert.deepEqual(lightGroupServices(lights, 'color', [0, 0, 255]), [
+    { domain: 'light', service: 'turn_on', data: { entity_id: ['light.rgb'], rgb_color: [0, 0, 255] } },
+  ]);
+  assert.deepEqual(lightGroupServices(lights, 'color_temp', 2700), [
+    { domain: 'light', service: 'turn_on', data: { entity_id: ['light.rgb', 'light.warm', 'light.warm2'], color_temp_kelvin: 2700 } },
+  ]);
+  assert.deepEqual(lightGroupServices(lights, 'color_temp', 6000).map((service) => service.data), [
+    { entity_id: ['light.rgb', 'light.warm'], color_temp_kelvin: 6000 },
+    { entity_id: ['light.warm2'], color_temp_kelvin: 5000 },
+  ]);
+  assert.deepEqual(lightGroupServices([], 'on'), [], 'no lights, no call');
+  assert.deepEqual(lightGroupServices(lights.slice(0, 1), 'color', [1, 2, 3]), []);
+  assert.throws(() => lightGroupServices(lights, 'on', 5), /does not take a value/);
+  assert.throws(() => lightGroupServices(lights, 'blink'), /Unknown command/);
 });
 
 test('climate entities only get a temperature command when they have a target temperature', () => {

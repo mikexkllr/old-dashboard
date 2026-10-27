@@ -6,7 +6,8 @@ Old iPads can't run most modern apps, but Safari still loads plain web pages. Th
 
 - **Photo frame:** a full-screen slideshow of random photos from [Immich](https://immich.app), with a clock and the date each photo was taken. Swipe left to skip to the next photo, or right to go back to the ones before.
 - **Screensaver:** the photos are what the screen shows when nobody is using it.
-- **Home panel:** tap the photo to open the controls. They are loaded from Home Assistant: every light (with brightness), room by room, plus covers, switches, scenes, climate and sensors. The panel returns to the photos after a minute without a tap.
+- **Home panel:** tap the photo to open the controls. They are loaded from Home Assistant: every light (with brightness, colour and white tone), room by room, plus covers, switches, scenes, climate and sensors. Every room, and the whole home, has **All on**, **All off** and one colour for all its lights. The panel returns to the photos after a minute without a tap.
+- **Settings menu:** on the iPad itself. Choose which photos to show (only photos from 2015 onwards, say, or from some albums, of some people, or favourites), how long each photo stays, the clock and date, and which entities the panel shows. Changes apply at once, to every screen, and are kept on the server.
 
 The server talks to Immich and Home Assistant, so their keys never reach the iPad. It runs as one Docker container and has no npm dependencies at runtime.
 
@@ -21,7 +22,12 @@ The server talks to Immich and Home Assistant, so their keys never reach the iPa
 
 ### 1. Create an Immich API key
 
-In Immich, open your account settings, go to API keys, and create a key with the `asset.read` and `asset.view` permissions.
+In Immich, open your account settings, go to API keys, and create a key with these permissions:
+
+- `asset.read` and `asset.view`, to find and show photos
+- `album.read` and `person.read`, so the settings menu can list your albums and people to pick from
+
+A key without the last two still shows photos. The settings menu then says which permission is missing.
 
 Immich's preview images must be JPEG. Set the preview image format to JPEG in Immich's admin settings (config key `image.preview.format`). iOS 12 cannot display WebP. If Immich sends WebP, the dashboard reports that clearly instead of showing broken pictures.
 
@@ -37,8 +43,10 @@ Portainer builds the dashboard from this repository, and redeploys it whenever `
 2. Select **Git Repository**, and choose or create a Git source for `https://github.com/mikexkllr/old-dashboard`. No login is needed, because the repository is public.
 3. Set the repository reference to `refs/heads/main` and the compose path to `docker-compose.yml`.
 4. Under **GitOps updates**, turn the setting on, choose **Polling**, and set the fetch interval to 5 minutes. Leave **Re-pull image** and **Force redeployment** off.
-5. Under **Environment variables**, enter the values from the [Settings](#settings) table, or upload a `.env` file that contains them.
+5. Under **Environment variables**, enter the values from the [environment variables](#environment-variables) table, or upload a `.env` file that contains them.
 6. Click **Deploy the stack**. The dashboard is then at `http://<umbrel-ip>:<DASHBOARD_PORT>`.
+
+The stack also creates a volume, `old-dashboard_settings`, where the settings menu saves its changes. It stays when the stack is redeployed or updated. Deleting the stack together with its volumes resets the settings to the environment values.
 
 **Automatic updates.** After a push to `main`, Portainer sees the new commit within the fetch interval, rebuilds the image and restarts the container. The iPad reloads itself when the new server starts, unless the home panel is open at that moment. To update straight away, use **Pull and redeploy** on the stack.
 
@@ -68,24 +76,47 @@ Without Portainer, run `cp .env.example .env`, edit it, then `docker compose up 
 4. Keep the iPad plugged in.
 5. Optional: go to **Settings > General > Accessibility > Guided Access** and turn it on. Then open the dashboard and triple-click the Home button (the top button on iPads without one). This locks the iPad to the dashboard.
 
-## Settings
+## Settings menu
+
+Tap the photo to open the home panel, then tap the round button with the sliders, next to **Photos**. The menu has:
+
+- **Photos:** a from year and an until year, so the frame shows only photos taken in those years, and **Favourites only**. Below them, the menu says how many photos match, so a filter that matches nothing is noticed straight away.
+- **Albums:** tick albums to show only their photos, from any of them. **All photos** clears the choice. Albums shared with you are listed too.
+- **People:** tick people to show only photos of them, of any of them. Only people with a name in Immich are listed.
+- **Slideshow:** the time per photo (10 seconds to an hour), the photo size (auto, fill screen or whole photo), and whether the clock and the date taken are shown.
+- **Home panel:** how long until the panel returns to the photos, and **Choose what the panel shows**, a switch for every entity, room by room.
+- **Reset all settings:** goes back to the values from the environment variables. Tap it twice to confirm.
+
+Every change is saved on the server at once and applies to every screen that shows the dashboard: the iPad that made it straight away, other screens within a minute. A changed photo filter shows a matching photo as soon as you close the menu. The menu waits five minutes without a tap before it returns to the photos.
+
+**The menu wins over the environment.** The environment variables below are the defaults. A setting changed in the menu replaces its variable until you reset the menu. A value set back to the variable's own value counts as unchanged again. The menu says how many settings it changed, and whether they are saved.
+
+The menu saves its changes in `/data/settings.json`, in the `settings` volume that `docker-compose.yml` creates. If the server cannot write there, the menu still works, but says that the changes are lost when the container restarts.
+
+What the menu does not change, on purpose: the addresses and keys, and `HA_ENTITIES`, which unlocks scripts, garage doors and the like. The menu has no login, so it can hide entities from the panel but never unlock more. Entities hidden with `HA_HIDE_ENTITIES` are not listed in the menu at all.
+
+## Environment variables
 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `IMMICH_URL` | none | Immich address, for example `http://192.168.1.10:2283`. Needs `IMMICH_API_KEY`. |
 | `IMMICH_API_KEY` | none | Immich API key from step 1. |
-| `IMMICH_ALBUM_IDS` | whole library | Comma-separated album IDs to show. |
-| `IMMICH_FAVORITES_ONLY` | `false` | Show only favourite photos. |
+| `IMMICH_ALBUM_IDS` | whole library | Comma-separated album IDs to show. The settings menu can change it. |
+| `IMMICH_PERSON_IDS` | anyone | Comma-separated person IDs, to show only photos of these people. The settings menu can change it. |
+| `IMMICH_FROM_YEAR` | any year | Show only photos taken in this year or later, for example `2015`. The settings menu can change it. |
+| `IMMICH_TO_YEAR` | any year | Show only photos taken in this year or earlier. The settings menu can change it. |
+| `IMMICH_FAVORITES_ONLY` | `false` | Show only favourite photos. The settings menu can change it. |
 | `IMMICH_PLAYLIST_SIZE` | `200` | Photos fetched per batch, up to 1000. |
 | `HA_URL` | none | Home Assistant address, for example `http://192.168.1.10:8123`. Use an IP address, because containers can't resolve `.local` names. Needs `HA_TOKEN`. |
 | `HA_TOKEN` | none | Long-lived access token from step 2. |
 | `HA_ENTITIES` | none | Extra entities to show and control, on top of the ones found automatically. Use it for scripts, automations, buttons, groups and garage, door or gate covers. See [Home Assistant entities](#home-assistant-entities). |
 | `HA_HIDE_ENTITIES` | none | Entities to leave off the panel, for example noisy sensors. |
-| `SLIDE_INTERVAL_SECONDS` | `60` | Seconds each photo stays on screen. |
-| `PHOTO_FIT` | `auto` | `auto` fills the screen when a photo's shape is close to the screen's, and shows the whole photo when they differ a lot (a portrait photo on a landscape screen, for example). `cover` always fills, `contain` always shows the whole photo. |
-| `SHOW_CLOCK` | `true` | Show the clock and date over the photos. |
-| `SHOW_CAPTIONS` | `true` | Show the date each photo was taken, bottom right. |
-| `PANEL_IDLE_SECONDS` | `60` | Seconds without a tap before the home panel returns to the photos. |
+| `SLIDE_INTERVAL_SECONDS` | `60` | Seconds each photo stays on screen. The settings menu can change it. |
+| `PHOTO_FIT` | `auto` | `auto` fills the screen when a photo's shape is close to the screen's, and shows the whole photo when they differ a lot (a portrait photo on a landscape screen, for example). `cover` always fills, `contain` always shows the whole photo. The settings menu can change it. |
+| `SHOW_CLOCK` | `true` | Show the clock and date over the photos. The settings menu can change it. |
+| `SHOW_CAPTIONS` | `true` | Show the date each photo was taken, bottom right. The settings menu can change it. |
+| `PANEL_IDLE_SECONDS` | `60` | Seconds without a tap before the home panel returns to the photos. The settings menu can change it. |
+| `SETTINGS_FILE` | `/data/settings.json` in Docker | Where the settings menu saves its changes. Without it, outside Docker, changes last until the server restarts. |
 | `PORT` | `3000` | Port inside the container. |
 | `DASHBOARD_PORT` | `8080` | Port on the host (docker compose only). |
 
@@ -95,28 +126,40 @@ Photos and Home Assistant are optional and independent. A clock-only frame works
 
 The panel is built from what Home Assistant reports, so new lights and rooms appear without any configuration. Every tab lists its entities by room. The tabs are:
 
-- **Rooms:** every entity, grouped by the room (area) it belongs to in Home Assistant. When lights are on in a room, it gets an **All off** button, which turns off the lights the panel shows there (hidden lights are left alone). Entities without a room are listed under **No room**.
-- **Lights:** every light, by room. Dimmable lights have a brightness slider.
+- **Rooms:** every entity, grouped by the room (area) it belongs to in Home Assistant. Entities without a room are listed under **No room**.
+- **Lights:** every light, by room. Dimmable lights have a brightness slider. Lights with colours or white tones have a round colour button beside the slider.
 - **Covers:** blinds and shutters, with open, stop and close.
 - **Switches:** switches, fans and input booleans.
 - **Scenes:** scenes.
 - **Climate:** the target temperature, changed with − and +. The step is the thermostat's own (0.5 °C when it does not report one), and the limits are the thermostat's minimum and maximum.
 - **Status:** sensors, binary sensors, locks, media players and anything else. These are read-only, and locks and alarms can never be controlled from the dashboard.
 
+### Lights, colours and whole rooms
+
+- Tap a light to switch it on or off, and drag its slider to dim it.
+- Tap the round colour button on a light to pick a colour: white tones (warm, neutral, daylight), eight colours, or any colour and any white tone on two sliders. Picking one switches the light on. Lights that only do white tones get the white choices only. The button shows the light's current colour.
+- Every room with lights has **All on** and **All off**, shown while some of its lights are off or on, and a colour button for all its colour lights at once. The **All lights** bar at the top of the Rooms and Lights tabs does the same for the whole home.
+- A colour for many lights only goes to the lights that can show it, and a white tone is kept inside each light's own range. Lights hidden from the panel are always left alone.
+
+### Entities that need to be listed
+
 A few kinds of entity stay off the panel until you list them in `HA_ENTITIES`, because they can run actions or open things: scripts, automations, buttons, groups, and covers for doors, garages and gates. Listed scripts and buttons run when tapped, and listed automations are toggled. Internal entities such as people, zones, the sun, updates and cameras never appear.
 
-`HA_HIDE_ENTITIES` removes any entity from the panel, including one you listed. The names come from Home Assistant's friendly names, so rename entities there.
+`HA_HIDE_ENTITIES` removes any entity from the panel, including one you listed. **Choose what the panel shows** in the settings menu hides more, and shows them again. The names come from Home Assistant's friendly names, so rename entities there.
 
 ## Photos
 
-- Photos are picked at random from the whole library, or from `IMMICH_ALBUM_IDS`.
+- Photos are picked at random from the whole library, or from the albums, people, years and favourites chosen in the settings menu (or in the environment variables). Albums and people each match any of the ones chosen, and the filters together all have to match.
+- Years count by the date each photo was taken, from 1 January of the from year to 31 December of the until year.
+- Immich 3.2 and later run all of that as one search. Older versions only find photos that are in every listed album, so the dashboard sends them one search per album and person instead (up to 12 per batch, a different sample each time).
 - Only photos in the timeline are used. Archived, hidden and locked photos, videos, trashed photos and offline files are skipped.
 - The dashboard asks Immich for a fresh random batch when it runs out, so the frame keeps changing without a restart.
 - Swipe left on the photo for the next one, and right to go back through the last 30. In a desktop browser, the arrow keys do the same. A tap still opens the home panel.
 
 ## Security
 
-- The dashboard has no login. Anyone who can reach its port can see the photos and control the entities on the panel. Keep it on your home network or a VPN, and do not forward its port to the internet.
+- The dashboard has no login. Anyone who can reach its port can see the photos, control the entities on the panel and change the settings menu. Keep it on your home network or a VPN, and do not forward its port to the internet.
+- The settings menu can only hide entities, never unlock more, so it cannot open a garage door that `HA_ENTITIES` does not list.
 - Garage, door and gate covers, scripts, automations and buttons are not reachable until you list them in `HA_ENTITIES`. Locks and alarms cannot be controlled at all.
 - Every command is checked on the server against the entity's current state and its allowed commands, so the browser cannot ask for anything the panel does not offer.
 - Portainer deploys whatever is on `main`, so only you should be able to push to this repository. Anyone who can push there can change what runs on your server.
@@ -141,9 +184,11 @@ Requires Node.js 22 or newer. The only dev dependency is `acorn`, which the test
 
 ## Status
 
-- The server and the page are covered by `npm test`. The page was checked with the mock servers in a desktop Chromium at iPad and phone sizes, and rendered in macOS WebKit, the engine behind Safari.
+- The server and the page are covered by `npm test`. The page was checked with the mock servers in a desktop Chromium at iPad and phone sizes, and rendered in macOS WebKit, the engine behind Safari. The settings menu, the colour picker and All on were checked the same way in Chromium, including a second screen picking up changed settings.
+- The settings volume was checked with `docker compose`: the read-only container writes its settings there, and they survive a restart and a recreated container.
+- Colours were checked against Home Assistant's light source: `rgb_color` and `color_temp_kelvin` on `light.turn_on`, which Home Assistant converts for lights that use another colour mode.
 - The Home Assistant side was checked against Home Assistant's core source for the service names and attributes it uses. The room template was rendered with Jinja2 and parsed by the server, and the tests use a mock Home Assistant that keeps state and applies services.
-- The Immich integration is written against Immich's API spec for version 3.3. Immich 3.2 and later use the `filter` search, and older servers use the top-level search fields. Both shapes are covered by tests with mock servers, but neither has been run against a live Immich server yet.
+- The Immich integration is written against Immich's API spec for version 3.3. Immich 3.2 and later use the `filter` search, and older servers use the top-level search fields. Both shapes, the year, album and people filters, and the album and people lists are covered by tests with mock servers, but none of it has been run against a live Immich server yet.
 - This has not yet been tested on a real iOS 12 iPad. If something breaks there, please open an issue with the iPad model and iOS version.
 
 ## License

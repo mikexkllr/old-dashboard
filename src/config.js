@@ -1,19 +1,17 @@
 import { isEntityId } from './homeassistant.js';
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PHOTO_FIT_MODES = ['auto', 'cover', 'contain'];
+import { isUuid, MAX_YEAR, MIN_YEAR, PHOTO_FIT_MODES } from './settings.js';
 
 function text(env, name, fallback = '') {
   const value = env[name];
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback;
 }
 
-function integer(env, name, fallback, max) {
+function integer(env, name, fallback, max, min = 1) {
   const raw = text(env, name);
   if (raw === '') return fallback;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > max) {
-    throw new Error(`${name} must be a whole number from 1 to ${max} (got "${raw}")`);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be a whole number from ${min} to ${max} (got "${raw}")`);
   }
   return value;
 }
@@ -54,7 +52,8 @@ function httpUrl(env, name) {
 /**
  * Reads settings from environment variables. Photos and Home Assistant are
  * optional, but each needs its URL and secret together, so a half-filled pair
- * fails at startup instead of silently doing nothing.
+ * fails at startup instead of silently doing nothing. The frame and photo
+ * settings are defaults that the settings menu can change.
  */
 export function loadConfig(env = process.env) {
   const immichUrl = httpUrl(env, 'IMMICH_URL').replace(/\/api$/, '');
@@ -74,8 +73,16 @@ export function loadConfig(env = process.env) {
     throw new Error(`PHOTO_FIT must be one of ${PHOTO_FIT_MODES.join(', ')}`);
   }
 
+  const fromYear = integer(env, 'IMMICH_FROM_YEAR', null, MAX_YEAR, MIN_YEAR);
+  const toYear = integer(env, 'IMMICH_TO_YEAR', null, MAX_YEAR, MIN_YEAR);
+  if (fromYear !== null && toYear !== null && fromYear > toYear) {
+    throw new Error(`IMMICH_FROM_YEAR (${fromYear}) must not be after IMMICH_TO_YEAR (${toYear})`);
+  }
+
   return {
     port: integer(env, 'PORT', 3000, 65535),
+    // Where the settings menu keeps its changes. Empty keeps them in memory only.
+    settingsFile: text(env, 'SETTINGS_FILE'),
     frame: {
       intervalSeconds: integer(env, 'SLIDE_INTERVAL_SECONDS', 60, 3600),
       photoFit,
@@ -86,8 +93,11 @@ export function loadConfig(env = process.env) {
     immich: {
       url: immichUrl,
       apiKey: immichKey,
-      albumIds: list(env, 'IMMICH_ALBUM_IDS', (id) => UUID.test(id), 'album id (expected a UUID)'),
+      albumIds: list(env, 'IMMICH_ALBUM_IDS', isUuid, 'album id (expected a UUID)'),
+      personIds: list(env, 'IMMICH_PERSON_IDS', isUuid, 'person id (expected a UUID)'),
       favoritesOnly: boolean(env, 'IMMICH_FAVORITES_ONLY', false),
+      fromYear,
+      toYear,
       playlistSize: integer(env, 'IMMICH_PLAYLIST_SIZE', 200, 1000),
     },
     homeAssistant: {

@@ -3,6 +3,7 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { createHomeAssistantClient } from '../src/homeassistant.js';
 import { createImmichClient } from '../src/immich.js';
+import { createSettingsStore, settingsDefaults } from '../src/settings.js';
 
 export const IMMICH_KEY = 'immich-test-key';
 export const HA_TOKEN = 'ha-test-token';
@@ -16,6 +17,33 @@ export const ASSET_VIDEO = '22222222-2222-4222-8222-222222222222';
 export const ASSET_TRASHED = '33333333-3333-4333-8333-333333333333';
 export const ASSET_MISSING = '44444444-4444-4444-8444-444444444444';
 export const ALBUM_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+export const ALBUM_SHARED = 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e';
+export const PERSON_ANNA = 'c3d4e5f6-a7b8-4c9d-8e1f-2a3b4c5d6e7f';
+export const PERSON_BEN = 'd4e5f6a7-b8c9-4d0e-9f2a-3b4c5d6e7f80';
+export const PERSON_UNNAMED = 'e5f6a7b8-c9d0-4e1f-8a3b-4c5d6e7f8091';
+
+export function defaultAlbums() {
+  return [
+    { id: ALBUM_ID, albumName: 'Summer', assetCount: 120, shared: false },
+    { id: '9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b', albumName: 'Autumn walks', assetCount: 3, shared: false },
+  ];
+}
+
+export function defaultSharedAlbums() {
+  return [
+    { id: ALBUM_SHARED, albumName: 'Family', assetCount: 900, shared: true },
+    { id: ALBUM_ID, albumName: 'Summer', assetCount: 120, shared: false },
+  ];
+}
+
+export function defaultPeople() {
+  return [
+    { id: PERSON_BEN, name: 'Ben', isHidden: false },
+    { id: PERSON_UNNAMED, name: '', isHidden: false },
+    { id: PERSON_ANNA, name: 'Anna', isHidden: false },
+    { id: 'f6a7b8c9-d0e1-4f2a-9b4c-5d6e7f8091a2', name: 'Hidden person', isHidden: true },
+  ];
+}
 
 export function defaultAssets() {
   return [
@@ -82,7 +110,11 @@ export function closeServer(server) {
 export async function startImmich({
   version = { major: 3, minor: 3, patch: 0 },
   assets = defaultAssets(),
+  albums = defaultAlbums(),
+  sharedAlbums = defaultSharedAlbums(),
+  people = defaultPeople(),
   previewType = 'image/jpeg',
+  forbidden = [],
 } = {}) {
   const calls = [];
   const mock = await listen(async (req, res) => {
@@ -93,7 +125,21 @@ export async function startImmich({
     if (url.pathname === '/api/server/version') return json(res, 200, version);
     if (req.headers['x-api-key'] !== IMMICH_KEY) return json(res, 401, { message: 'Invalid API key' });
 
-    if (req.method === 'POST' && url.pathname === '/api/search/random') return json(res, 200, assets);
+    // `forbidden` lists paths the key lacks the permission for, as Immich answers then.
+    if (forbidden.includes(url.pathname)) return json(res, 403, { message: 'Missing required permission' });
+
+    if (req.method === 'POST' && url.pathname === '/api/search/random') {
+      const { size = 250 } = JSON.parse(body || '{}');
+      return json(res, 200, assets.slice(0, size));
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/albums') {
+      return json(res, 200, url.searchParams.get('shared') === 'true' ? sharedAlbums : albums);
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/people') {
+      return json(res, 200, { people, total: people.length, hidden: 1, hasNextPage: false });
+    }
 
     const thumbnail = /^\/api\/assets\/([^/]+)\/thumbnail$/.exec(url.pathname);
     if (req.method === 'GET' && thumbnail) {
@@ -125,6 +171,19 @@ export function defaultHaStates() {
     haState('light.hall', 'on', { friendly_name: 'Hall lights', supported_color_modes: ['brightness'], brightness: 128 }),
     haState('light.bedside', 'on', { friendly_name: 'Bedside lamp', supported_color_modes: ['onoff'] }),
     haState('light.broken', 'unavailable', { friendly_name: 'Broken lamp', supported_color_modes: ['onoff'] }),
+    haState('light.strip', 'on', {
+      friendly_name: 'LED strip',
+      supported_color_modes: ['rgb'],
+      color_mode: 'rgb',
+      brightness: 255,
+      rgb_color: [0, 120, 255],
+    }),
+    haState('light.ceiling', 'off', {
+      friendly_name: 'Ceiling',
+      supported_color_modes: ['color_temp'],
+      min_color_temp_kelvin: 2700,
+      max_color_temp_kelvin: 6500,
+    }),
     haState('switch.coffee', 'on', { friendly_name: 'Coffee machine' }),
     haState('fan.bathroom', 'off', { friendly_name: 'Bathroom fan' }),
     haState('input_boolean.guest_mode', 'off', { friendly_name: 'Guest mode' }),
@@ -168,6 +227,7 @@ export function defaultRooms() {
       entities: ['light.hall', 'cover.living_room_blinds', 'climate.living_room', 'media_player.living_room_tv', 'switch.coffee'],
     },
     { id: 'bedroom', name: 'Bedroom', entities: ['light.bedside', 'climate.bedroom'] },
+    { id: 'office', name: 'Office', entities: ['light.strip', 'light.ceiling'] },
   ];
 }
 
@@ -190,6 +250,16 @@ function applyService(current, rooms, domain, service, data) {
       entity.state = 'on';
       if (typeof data.brightness_pct === 'number') attributes.brightness = Math.round((data.brightness_pct * 255) / 100);
       else if (attributes.brightness === undefined) attributes.brightness = 255;
+      if (data.rgb_color) {
+        attributes.color_mode = 'rgb';
+        attributes.rgb_color = data.rgb_color;
+        attributes.color_temp_kelvin = null;
+      }
+      if (data.color_temp_kelvin) {
+        attributes.color_mode = 'color_temp';
+        attributes.color_temp_kelvin = data.color_temp_kelvin;
+        attributes.rgb_color = [255, 200, 150];
+      }
     }
     // A light switched on without a level comes on at full brightness, as Home Assistant does.
     if (domain === 'light' && service === 'toggle' && entity.state === 'on' && attributes.brightness === undefined) {
@@ -259,7 +329,7 @@ export async function startHomeAssistant({ states = defaultHaStates(), rooms = d
 }
 
 /** Starts the dashboard against whatever upstreams the env points at. */
-export async function startDashboard(env, { now } = {}) {
+export async function startDashboard(env, { now, settingsFile = '' } = {}) {
   const config = loadConfig(env);
   const immich = createImmichClient(config.immich);
   const homeAssistant = createHomeAssistantClient({
@@ -267,7 +337,9 @@ export async function startDashboard(env, { now } = {}) {
     now,
     logger: { warn() {} },
   });
-  const server = createApp({ config, immich, homeAssistant, logger: { error() {} } });
+  const settings = createSettingsStore({ defaults: settingsDefaults(config), file: settingsFile, logger: { warn() {} } });
+  await settings.load();
+  const server = createApp({ config, immich, homeAssistant, settings, logger: { error() {} } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   return { url: `http://127.0.0.1:${port}`, close: () => closeServer(server) };

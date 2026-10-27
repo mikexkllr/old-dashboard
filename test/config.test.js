@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
-import { ALBUM_ID } from './support.js';
+import { ALBUM_ID, PERSON_ANNA } from './support.js';
 
 test('everything is optional, with sensible defaults', () => {
   const config = loadConfig({});
@@ -65,4 +65,25 @@ test('HA_ENTITIES adds to the discovered entities, and HA_HIDE_ENTITIES removes 
 test('PHOTO_FIT only accepts the known modes', () => {
   assert.equal(loadConfig({ PHOTO_FIT: 'Contain' }).frame.photoFit, 'contain');
   assert.throws(() => loadConfig({ PHOTO_FIT: 'stretch' }), /PHOTO_FIT/);
+});
+
+test('photo years and people are optional filters, checked at startup', () => {
+  const none = loadConfig({});
+  assert.equal(none.immich.fromYear, null);
+  assert.equal(none.immich.toYear, null);
+  assert.deepEqual(none.immich.personIds, []);
+  assert.equal(none.settingsFile, '');
+
+  const config = loadConfig({ IMMICH_FROM_YEAR: '2015', IMMICH_TO_YEAR: '2020', IMMICH_PERSON_IDS: PERSON_ANNA });
+  assert.equal(config.immich.fromYear, 2015);
+  assert.equal(config.immich.toYear, 2020);
+  assert.deepEqual(config.immich.personIds, [PERSON_ANNA]);
+
+  assert.throws(() => loadConfig({ IMMICH_FROM_YEAR: '15' }), /IMMICH_FROM_YEAR must be a whole number from 1900/);
+  assert.throws(() => loadConfig({ IMMICH_FROM_YEAR: '2021', IMMICH_TO_YEAR: '2020' }), /must not be after/);
+  assert.throws(() => loadConfig({ IMMICH_PERSON_IDS: 'anna' }), /person id/);
+});
+
+test('SETTINGS_FILE says where the settings menu saves its changes', () => {
+  assert.equal(loadConfig({ SETTINGS_FILE: '/data/settings.json' }).settingsFile, '/data/settings.json');
 });

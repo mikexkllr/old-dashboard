@@ -1,12 +1,16 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { supportsFilterSearch } from '../src/immich.js';
+import { buildRandomSearch, legacySearches, supportsFilterSearch } from '../src/immich.js';
 import {
   ALBUM_ID,
+  ALBUM_SHARED,
   ASSET_IMAGE,
   ASSET_MISSING,
+  defaultAssets,
   HA_TOKEN,
   IMMICH_KEY,
+  PERSON_ANNA,
+  PERSON_BEN,
   PREVIEW_JPEG,
   startDashboard,
   startHomeAssistant,
@@ -24,6 +28,29 @@ test('filter-style search is used from Immich 3.2 onwards only', () => {
   assert.equal(supportsFilterSearch({ major: 3, minor: 1 }), false);
   assert.equal(supportsFilterSearch({ major: 3, minor: 2 }), true);
   assert.equal(supportsFilterSearch({ major: 4, minor: 0 }), true);
+});
+
+test('builds year ranges from the start of the first year to the end of the last', () => {
+  assert.deepEqual(buildRandomSearch({ useFilter: true, size: 10, toYear: 2019 }).filter.takenAt, {
+    lte: '2019-12-31T23:59:59.999Z',
+  });
+  const legacy = buildRandomSearch({ useFilter: false, size: 10, fromYear: 2015, toYear: 2015, personIds: [PERSON_ANNA] });
+  assert.equal(legacy.takenAfter, '2015-01-01T00:00:00.000Z');
+  assert.equal(legacy.takenBefore, '2015-12-31T23:59:59.999Z');
+  assert.deepEqual(legacy.personIds, [PERSON_ANNA]);
+});
+
+test('older servers get one search per album and person, sampled when there are many', () => {
+  const searches = legacySearches({ size: 100, albumIds: [ALBUM_ID, ALBUM_SHARED], personIds: [PERSON_ANNA], favoritesOnly: true });
+  assert.deepEqual(searches, [
+    { favoritesOnly: true, albumIds: [ALBUM_ID], personIds: [PERSON_ANNA], size: 50 },
+    { favoritesOnly: true, albumIds: [ALBUM_SHARED], personIds: [PERSON_ANNA], size: 50 },
+  ]);
+  const many = Array.from({ length: 30 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+  const sampled = legacySearches({ size: 200, albumIds: many, personIds: [] });
+  assert.equal(sampled.length, 12);
+  assert.equal(new Set(sampled.map((search) => search.albumIds[0])).size, 12);
+  assert.ok(sampled.every((search) => search.size === 17 && search.personIds.length === 0));
 });
 
 describe('photos from Immich', () => {
@@ -48,8 +75,9 @@ describe('photos from Immich', () => {
     const res = await fetch(`${dashboard.url}/api/photos`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('cache-control'), 'no-store');
-    const { photos } = await res.json();
+    const { photos, more } = await res.json();
     assert.deepEqual(photos, [{ id: ASSET_IMAGE, takenAt: '2024-03-12T14:21:30.000Z' }]);
+    assert.equal(more, false, 'Immich sent fewer than a full batch, so these are all the matches');
 
     const search = immich.calls.find((call) => call.path === '/api/search/random');
     assert.equal(search.headers['x-api-key'], IMMICH_KEY);
@@ -140,6 +168,128 @@ describe('album and favourite filters', () => {
     } finally {
       await dashboard.close();
       await immich.close();
+    }
+  });
+});
+
+describe('photo filters from the settings menu', () => {
+  const put = (url, body) => fetch(`${url}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  test('Immich 3.2+ gets years, albums and people in one filter search, matching any album or person', async () => {
+    const immich = await startImmich();
+    const dashboard = await startDashboard({ IMMICH_URL: immich.url, IMMICH_API_KEY: IMMICH_KEY, IMMICH_TO_YEAR: '2020' });
+    try {
+      await put(dashboard.url, { fromYear: 2015, albumIds: [ALBUM_ID, ALBUM_SHARED], personIds: [PERSON_ANNA, PERSON_BEN] });
+      assert.equal((await fetch(`${dashboard.url}/api/photos`)).status, 200);
+      const searches = immich.calls.filter((call) => call.path === '/api/search/random');
+      assert.equal(searches.length, 1);
+      assert.deepEqual(JSON.parse(searches[0].body), {
+        size: 200,
+        filter: {
+          type: { eq: 'IMAGE' },
+          visibility: { eq: 'timeline' },
+          albumIds: { any: [ALBUM_ID, ALBUM_SHARED] },
+          personIds: { any: [PERSON_ANNA, PERSON_BEN] },
+          takenAt: { gte: '2015-01-01T00:00:00.000Z', lte: '2020-12-31T23:59:59.999Z' },
+        },
+      });
+    } finally {
+      await dashboard.close();
+      await immich.close();
+    }
+  });
+
+  test('older Immich servers get one search per album, because they match every listed album at once', async () => {
+    const immich = await startImmich({ version: { major: 2, minor: 5, patch: 0 } });
+    const dashboard = await startDashboard({ IMMICH_URL: immich.url, IMMICH_API_KEY: IMMICH_KEY, IMMICH_PLAYLIST_SIZE: '100' });
+    try {
+      await put(dashboard.url, { albumIds: [ALBUM_ID, ALBUM_SHARED], fromYear: 2015 });
+      const { photos } = await (await fetch(`${dashboard.url}/api/photos`)).json();
+      assert.deepEqual(photos.map((photo) => photo.id), [ASSET_IMAGE], 'the same photo from two searches is shown once');
+
+      const bodies = immich.calls
+        .filter((call) => call.path === '/api/search/random')
+        .map((call) => JSON.parse(call.body));
+      assert.deepEqual(bodies.map((body) => body.albumIds).sort(), [[ALBUM_ID], [ALBUM_SHARED]].sort());
+      for (const body of bodies) {
+        assert.equal(body.size, 50);
+        assert.equal(body.takenAfter, '2015-01-01T00:00:00.000Z');
+        assert.equal(body.takenBefore, undefined);
+      }
+    } finally {
+      await dashboard.close();
+      await immich.close();
+    }
+  });
+
+  test('says when more photos match than one batch holds', async () => {
+    const assets = Array.from({ length: 5 }, (_, i) => ({
+      ...defaultAssets()[0],
+      id: `11111111-1111-4111-8111-11111111111${i}`,
+    }));
+    const immich = await startImmich({ assets });
+    const dashboard = await startDashboard({ IMMICH_URL: immich.url, IMMICH_API_KEY: IMMICH_KEY, IMMICH_PLAYLIST_SIZE: '3' });
+    try {
+      const body = await (await fetch(`${dashboard.url}/api/photos`)).json();
+      assert.equal(body.photos.length, 3);
+      assert.equal(body.more, true);
+    } finally {
+      await dashboard.close();
+      await immich.close();
+    }
+  });
+
+  test('lists owned and shared albums once each, by name', async () => {
+    const immich = await startImmich();
+    const dashboard = await startDashboard({ IMMICH_URL: immich.url, IMMICH_API_KEY: IMMICH_KEY });
+    try {
+      const { albums } = await (await fetch(`${dashboard.url}/api/photos/albums`)).json();
+      assert.deepEqual(albums.map((album) => album.name), ['Autumn walks', 'Family', 'Summer']);
+      assert.deepEqual(albums[1], { id: ALBUM_SHARED, name: 'Family', count: 900, shared: true });
+    } finally {
+      await dashboard.close();
+      await immich.close();
+    }
+  });
+
+  test('lists named people only, by name', async () => {
+    const immich = await startImmich();
+    const dashboard = await startDashboard({ IMMICH_URL: immich.url, IMMICH_API_KEY: IMMICH_KEY });
+    try {
+      const { people } = await (await fetch(`${dashboard.url}/api/photos/people`)).json();
+      assert.deepEqual(people, [{ id: PERSON_ANNA, name: 'Anna' }, { id: PERSON_BEN, name: 'Ben' }]);
+    } finally {
+      await dashboard.close();
+      await immich.close();
+    }
+  });
+
+  test('names the missing permission when the key cannot list albums or people', async () => {
+    const immich = await startImmich({ forbidden: ['/api/albums', '/api/people'] });
+    const dashboard = await startDashboard({ IMMICH_URL: immich.url, IMMICH_API_KEY: IMMICH_KEY });
+    try {
+      const albums = await fetch(`${dashboard.url}/api/photos/albums`);
+      assert.equal(albums.status, 502);
+      assert.match((await albums.json()).error, /album\.read/);
+      const people = await fetch(`${dashboard.url}/api/photos/people`);
+      assert.match((await people.json()).error, /person\.read/);
+    } finally {
+      await dashboard.close();
+      await immich.close();
+    }
+  });
+
+  test('album and people lists need Immich', async () => {
+    const dashboard = await startDashboard({});
+    try {
+      assert.equal((await fetch(`${dashboard.url}/api/photos/albums`)).status, 503);
+      assert.equal((await fetch(`${dashboard.url}/api/photos/people`)).status, 503);
+    } finally {
+      await dashboard.close();
     }
   });
 });
@@ -406,6 +556,121 @@ describe('Home Assistant controls', () => {
   test('rejects rooms that do not exist and malformed room ids', async () => {
     assert.equal((await post(`${dashboard.url}/api/ha/rooms/attic/lights-off`, {})).status, 404);
     assert.equal((await post(`${dashboard.url}/api/ha/rooms/Kitchen/lights-off`, {})).status, 400);
+  });
+});
+
+describe('light colours and whole-room commands', () => {
+  let ha;
+  let dashboard;
+
+  before(async () => {
+    ha = await startHomeAssistant();
+    dashboard = await startDashboard({ HA_URL: ha.url, HA_TOKEN });
+  });
+
+  after(async () => {
+    await dashboard.close();
+    await ha.close();
+  });
+
+  const lights = (body) => post(`${dashboard.url}/api/ha/lights`, body);
+  const lastService = (path) => JSON.parse(ha.calls.findLast((request) => request.path === path).body);
+
+  test('reports which lights take a colour or a white tone, and the colour they show', async () => {
+    const byId = Object.fromEntries((await (await fetch(`${dashboard.url}/api/ha/controls`)).json()).entities
+      .map((entity) => [entity.entity_id, entity]));
+    assert.deepEqual(byId['light.strip'].commands, ['toggle', 'brightness', 'color', 'color_temp']);
+    assert.deepEqual(byId['light.strip'].color.rgb, [0, 120, 255]);
+    assert.deepEqual(byId['light.ceiling'].commands, ['toggle', 'brightness', 'color_temp']);
+    assert.equal(byId['light.ceiling'].color.minKelvin, 2700);
+    assert.equal(byId['light.ceiling'].color.rgb, null, 'an off light shows no colour');
+    assert.equal(byId['light.kitchen'].color, null);
+    assert.deepEqual(byId['light.kitchen'].commands, ['toggle', 'brightness']);
+  });
+
+  test('sets a colour, which also switches the light on', async () => {
+    const res = await post(`${dashboard.url}/api/ha/entities/light.strip/command`, { command: 'color', value: [255, 0, 80] });
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).entity.color.rgb, [255, 0, 80]);
+    assert.deepEqual(lastService('/api/services/light/turn_on'), { entity_id: 'light.strip', rgb_color: [255, 0, 80] });
+  });
+
+  test('keeps a white tone inside the light\'s own range', async () => {
+    const res = await post(`${dashboard.url}/api/ha/entities/light.ceiling/command`, { command: 'color_temp', value: 2200 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(lastService('/api/services/light/turn_on'), { entity_id: 'light.ceiling', color_temp_kelvin: 2700 });
+    assert.equal(ha.states['light.ceiling'].state, 'on');
+  });
+
+  test('refuses colours for lights without them, and malformed colours', async () => {
+    const refusals = [
+      ['light.ceiling', { command: 'color', value: [255, 0, 0] }, /cannot "color"/],
+      ['light.kitchen', { command: 'color_temp', value: 3000 }, /cannot "color_temp"/],
+      ['light.strip', { command: 'color', value: [256, 0, 0] }, /0 to 255/],
+      ['light.strip', { command: 'color', value: '#ff0000' }, /0 to 255/],
+      ['light.strip', { command: 'color_temp', value: 90000 }, /kelvin/],
+    ];
+    for (const [entityId, body, message] of refusals) {
+      const res = await post(`${dashboard.url}/api/ha/entities/${entityId}/command`, body);
+      assert.equal(res.status, 400, `${entityId} ${JSON.stringify(body)}`);
+      assert.match((await res.json()).error, message);
+    }
+  });
+
+  test('All on and All off reach every light on the panel, or the lights in one room', async () => {
+    const on = await lights({ command: 'on' });
+    assert.equal(on.status, 200);
+    const allIds = lastService('/api/services/light/turn_on').entity_id;
+    assert.deepEqual([...allIds].sort(), ['light.bedside', 'light.broken', 'light.ceiling', 'light.hall', 'light.kitchen', 'light.strip']);
+    assert.equal((await on.json()).count, 6);
+    assert.equal(ha.states['light.kitchen'].state, 'on');
+
+    assert.equal((await lights({ command: 'off', area: 'office' })).status, 200);
+    assert.deepEqual(lastService('/api/services/light/turn_off'), { entity_id: ['light.ceiling', 'light.strip'] });
+    assert.equal(ha.states['light.kitchen'].state, 'on', 'other rooms are left alone');
+  });
+
+  test('a colour for many lights only goes to the colour lights', async () => {
+    const res = await lights({ command: 'color', value: [255, 140, 0] });
+    assert.equal((await res.json()).count, 1);
+    assert.deepEqual(lastService('/api/services/light/turn_on'), { entity_id: ['light.strip'], rgb_color: [255, 140, 0] });
+  });
+
+  test('a white tone for many lights fits each light\'s range, so the calls are split by tone', async () => {
+    const before = ha.calls.length;
+    const res = await lights({ command: 'color_temp', value: 2200, area: 'office' });
+    assert.equal((await res.json()).count, 2);
+    const bodies = ha.calls.slice(before)
+      .filter((request) => request.path === '/api/services/light/turn_on')
+      .map((request) => JSON.parse(request.body));
+    assert.deepEqual(bodies, [
+      { entity_id: ['light.ceiling'], color_temp_kelvin: 2700 },
+      { entity_id: ['light.strip'], color_temp_kelvin: 2200 },
+    ]);
+  });
+
+  test('group commands are checked like single ones', async () => {
+    assert.equal((await lights({ command: 'explode' })).status, 400);
+    assert.equal((await lights({ command: 'on', value: 1 })).status, 400);
+    assert.equal((await lights({ command: 'color', value: [1, 2] })).status, 400);
+    assert.equal((await lights({ command: 'on', area: 'attic' })).status, 404);
+    assert.equal((await lights({ command: 'on', area: 'Office' })).status, 400);
+    assert.equal((await lights({ command: 'on', area: 5 })).status, 400);
+    assert.equal((await fetch(`${dashboard.url}/api/ha/lights`)).status, 405);
+  });
+
+  test('lights hidden in the settings menu are left out of group commands', async () => {
+    await fetch(`${dashboard.url}/api/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hiddenEntities: ['light.ceiling'] }),
+    });
+    try {
+      await lights({ command: 'off', area: 'office' });
+      assert.deepEqual(lastService('/api/services/light/turn_off'), { entity_id: ['light.strip'] });
+    } finally {
+      await fetch(`${dashboard.url}/api/settings`, { method: 'DELETE' });
+    }
   });
 });
 

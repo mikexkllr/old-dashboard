@@ -6,7 +6,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const STATES_TTL_MS = 2_000; // one entity list serves every panel poll in this window
 const ROOMS_TTL_MS = 60_000; // room layout changes rarely
 
-export const COMMANDS = new Set(['toggle', 'brightness', 'run', 'open', 'stop', 'close', 'temperature']);
+export const COMMANDS = new Set([
+  'toggle', 'brightness', 'color', 'color_temp', 'run', 'open', 'stop', 'close', 'temperature',
+]);
+
+// Commands for every light the panel shows, in a room or in the whole home.
+export const LIGHT_GROUP_COMMANDS = new Set(['on', 'off', 'color', 'color_temp']);
 
 // Renders one "id|name|entity,entity" line per room (area).
 export const ROOMS_TEMPLATE =
@@ -49,6 +54,14 @@ const RUN_SERVICES = new Map([
   ['input_button', ['input_button', 'press']],
 ]);
 
+// Home Assistant's colour modes. Lights in any of these take an RGB colour.
+const COLOR_MODES = new Set(['hs', 'xy', 'rgb', 'rgbw', 'rgbww']);
+// Home Assistant's own limits when a light does not report its range.
+const DEFAULT_MIN_KELVIN = 2000;
+const DEFAULT_MAX_KELVIN = 6535;
+// What a colour temperature command accepts, before clamping to the light's own range.
+const KELVIN_LIMITS = [1500, 10000];
+
 const ON_STATES = new Set(['on', 'open', 'opening']);
 const UNAVAILABLE_STATES = new Set(['unavailable', 'unknown']);
 
@@ -67,6 +80,25 @@ function isDimmable(attributes) {
   return typeof attributes.brightness === 'number';
 }
 
+function colorModes(attributes) {
+  return Array.isArray(attributes.supported_color_modes) ? attributes.supported_color_modes : [];
+}
+
+function supportsColor(attributes) {
+  return colorModes(attributes).some((mode) => COLOR_MODES.has(mode));
+}
+
+// Home Assistant turns a colour temperature into a colour for colour lights
+// that have no white channel of their own, so those take one too.
+function supportsColorTemp(attributes) {
+  return colorModes(attributes).includes('color_temp') || supportsColor(attributes);
+}
+
+function isRgb(value) {
+  return Array.isArray(value) && value.length === 3
+    && value.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+}
+
 // Percent of full brightness. An off light is always 0, even if it still carries
 // a stale brightness value. A light that is on without a reported level gets null,
 // so the panel never shows a level Home Assistant did not give.
@@ -78,7 +110,13 @@ export function brightnessLevel(stateValue, attributes) {
 
 function commandsFor(domain, state) {
   const attributes = state.attributes ?? {};
-  if (domain === 'light') return isDimmable(attributes) ? ['toggle', 'brightness'] : ['toggle'];
+  if (domain === 'light') {
+    if (!isDimmable(attributes)) return ['toggle'];
+    const commands = ['toggle', 'brightness'];
+    if (supportsColor(attributes)) commands.push('color');
+    if (supportsColorTemp(attributes)) commands.push('color_temp');
+    return commands;
+  }
   if (TOGGLE_DOMAINS.has(domain) || domain === 'group') return ['toggle'];
   if (domain === 'cover') return ['open', 'stop', 'close'];
   if (domain === 'climate') return typeof attributes.temperature === 'number' ? ['temperature'] : [];
@@ -122,6 +160,21 @@ function climateInfo(attributes) {
   };
 }
 
+// The colour an on light shows, and the white range it can take. Home
+// Assistant reports rgb_color for colour and white modes alike.
+function colorInfo(stateValue, attributes) {
+  const on = stateValue === 'on';
+  const range = typeof attributes.min_color_temp_kelvin === 'number' && typeof attributes.max_color_temp_kelvin === 'number';
+  return {
+    rgb: on && isRgb(attributes.rgb_color) ? attributes.rgb_color : null,
+    kelvin: on && typeof attributes.color_temp_kelvin === 'number' ? attributes.color_temp_kelvin : null,
+    minKelvin: range ? attributes.min_color_temp_kelvin : DEFAULT_MIN_KELVIN,
+    maxKelvin: range ? attributes.max_color_temp_kelvin : DEFAULT_MAX_KELVIN,
+    // Without a reported range, Home Assistant converts any temperature itself.
+    clampKelvin: range,
+  };
+}
+
 function toEntity(state, description, area) {
   const attributes = state.attributes ?? {};
   const { commands } = description;
@@ -138,6 +191,7 @@ function toEntity(state, description, area) {
     on: ON_STATES.has(state.state),
     commands,
     brightness: commands.includes('brightness') ? brightnessLevel(state.state, attributes) : null,
+    color: commands.includes('color_temp') ? colorInfo(state.state, attributes) : null,
     position: typeof attributes.current_position === 'number' ? attributes.current_position : null,
     climate: commands.includes('temperature') ? climateInfo(attributes) : null,
   };
@@ -206,6 +260,10 @@ export function serviceFor(entity, command, value) {
     case 'brightness':
       if (value === 0) return { domain: 'light', service: 'turn_off', data };
       return { domain: 'light', service: 'turn_on', data: { ...data, brightness_pct: value } };
+    case 'color':
+      return { domain: 'light', service: 'turn_on', data: { ...data, rgb_color: value } };
+    case 'color_temp':
+      return { domain: 'light', service: 'turn_on', data: { ...data, color_temp_kelvin: value } };
     case 'run': {
       const run = RUN_SERVICES.get(entity.domain);
       return run ? { domain: run[0], service: run[1], data } : null;
@@ -231,6 +289,16 @@ export function normalizeValue(entity, command, value) {
     }
     return Math.round(value);
   }
+  if (command === 'color') {
+    if (!isRgb(value)) throw new HttpError(400, 'Colour must be [red, green, blue], each a whole number from 0 to 255');
+    return value;
+  }
+  if (command === 'color_temp') {
+    const kelvin = checkKelvin(value);
+    return entity.color.clampKelvin
+      ? Math.min(entity.color.maxKelvin, Math.max(entity.color.minKelvin, kelvin))
+      : kelvin;
+  }
   if (command === 'temperature') {
     const { min, max } = entity.climate;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
@@ -242,6 +310,47 @@ export function normalizeValue(entity, command, value) {
     throw new HttpError(400, `"${command}" does not take a value`);
   }
   return undefined;
+}
+
+function checkKelvin(value) {
+  const [min, max] = KELVIN_LIMITS;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new HttpError(400, `Colour temperature must be a number of kelvin from ${min} to ${max}`);
+  }
+  return Math.round(value);
+}
+
+/**
+ * The service calls for a command sent to many lights at once. Each light only
+ * gets what it supports, and a colour temperature is kept inside each light's
+ * own range, so lights with different ranges can need separate calls.
+ */
+export function lightGroupServices(lights, command, value) {
+  if (command === 'on' || command === 'off') {
+    if (value !== undefined && value !== null) throw new HttpError(400, `"${command}" does not take a value`);
+    const ids = lights.map((light) => light.entity_id);
+    return ids.length ? [{ domain: 'light', service: command === 'on' ? 'turn_on' : 'turn_off', data: { entity_id: ids } }] : [];
+  }
+  if (command === 'color') {
+    if (!isRgb(value)) throw new HttpError(400, 'Colour must be [red, green, blue], each a whole number from 0 to 255');
+    const ids = lights.filter((light) => light.commands.includes('color')).map((light) => light.entity_id);
+    return ids.length ? [{ domain: 'light', service: 'turn_on', data: { entity_id: ids, rgb_color: value } }] : [];
+  }
+  if (command === 'color_temp') {
+    checkKelvin(value);
+    const byKelvin = new Map();
+    for (const light of lights) {
+      if (!light.commands.includes('color_temp')) continue;
+      const kelvin = normalizeValue(light, 'color_temp', value);
+      byKelvin.set(kelvin, [...(byKelvin.get(kelvin) ?? []), light.entity_id]);
+    }
+    return [...byKelvin].map(([kelvin, ids]) => ({
+      domain: 'light',
+      service: 'turn_on',
+      data: { entity_id: ids, color_temp_kelvin: kelvin },
+    }));
+  }
+  throw new HttpError(400, `Unknown command "${command}" for lights`);
 }
 
 // Shares one in-flight request between callers and reuses its result for ttlMs.
@@ -367,13 +476,18 @@ export function createHomeAssistantClient({
     await drain(res);
   }
 
-  async function getControls() {
+  // HA_HIDE_ENTITIES always applies. The settings menu can hide more.
+  function hiddenWith(extra) {
+    return extra.length ? new Set([...hidden, ...extra]) : hidden;
+  }
+
+  async function getControls({ hide = [] } = {}) {
     const [states, rooms] = await Promise.all([cachedStates(), cachedRooms()]);
-    const { entities, missing } = buildControls({ states, areas: rooms.byEntity, included, hidden });
+    const { entities, missing } = buildControls({ states, areas: rooms.byEntity, included, hidden: hiddenWith(hide) });
     return { configured: true, areasAvailable: rooms.available, entities, missing };
   }
 
-  async function runCommand(entityId, command, value) {
+  async function runCommand(entityId, command, value, { hide = [] } = {}) {
     if (!isEntityId(entityId)) throw new HttpError(400, 'Invalid entity id');
     if (!COMMANDS.has(command)) throw new HttpError(400, `Unknown command "${command}"`);
 
@@ -381,7 +495,7 @@ export function createHomeAssistantClient({
     const state = await readState(entityId);
     if (!state) throw new HttpError(404, `${entityId} was not found in Home Assistant`);
     const rooms = await cachedRooms();
-    const options = { areas: rooms.byEntity, included, hidden };
+    const options = { areas: rooms.byEntity, included, hidden: hiddenWith(hide) };
 
     const entity = describeEntity(state, options);
     if (!entity) throw new HttpError(403, `${entityId} is not controllable from the dashboard`);
@@ -397,20 +511,22 @@ export function createHomeAssistantClient({
     return describeEntity(updated ?? state, options) ?? entity;
   }
 
-  // Turns off the lights the panel shows in the room. Naming them, rather than
-  // sending the area, keeps lights in HA_HIDE_ENTITIES out of it.
-  async function lightsOffInArea(areaId) {
-    if (!AREA_ID.test(areaId)) throw new HttpError(400, 'Invalid room id');
+  // Commands the lights the panel shows, in one room or, without a room, in
+  // the whole home. Naming the lights, rather than sending the area, keeps
+  // hidden lights out of it. Returns how many lights were sent the command.
+  async function commandLights({ areaId = null, command, value, hide = [] }) {
+    if (!LIGHT_GROUP_COMMANDS.has(command)) throw new HttpError(400, `Unknown command "${command}" for lights`);
+    if (areaId !== null && !AREA_ID.test(areaId)) throw new HttpError(400, 'Invalid room id');
     const [states, rooms] = await Promise.all([cachedStates(), cachedRooms()]);
-    if (!rooms.rooms.some((room) => room.id === areaId)) throw new HttpError(404, 'Room not found');
-    const { entities } = buildControls({ states, areas: rooms.byEntity, included, hidden });
-    const lights = entities
-      .filter((entity) => entity.area_id === areaId && entity.domain === 'light')
-      .map((entity) => entity.entity_id);
-    if (lights.length === 0) return;
-    await callService({ domain: 'light', service: 'turn_off', data: { entity_id: lights } });
-    cachedStates.invalidate();
+    if (areaId !== null && !rooms.rooms.some((room) => room.id === areaId)) throw new HttpError(404, 'Room not found');
+    const { entities } = buildControls({ states, areas: rooms.byEntity, included, hidden: hiddenWith(hide) });
+    const lights = entities.filter((entity) => entity.domain === 'light' && (areaId === null || entity.area_id === areaId));
+
+    const services = lightGroupServices(lights, command, value);
+    for (const service of services) await callService(service);
+    if (services.length) cachedStates.invalidate();
+    return services.reduce((count, service) => count + service.data.entity_id.length, 0);
   }
 
-  return { enabled, getControls, runCommand, lightsOffInArea };
+  return { enabled, getControls, runCommand, commandLights };
 }

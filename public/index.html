@@ -33,12 +33,42 @@
       </div>
       <div class="panel-side">
         <div class="panel-time" id="panel-time"></div>
+        <button type="button" class="round-button" id="panel-settings" title="Settings" aria-label="Settings"></button>
         <button type="button" class="close-button" id="panel-close"><span>Photos</span></button>
       </div>
     </div>
     <div class="tabs" id="tabs"></div>
     <div class="panel-note hidden" id="panel-note"></div>
     <div class="content" id="content"></div>
+  </div>
+
+  <div class="panel settings hidden" id="settings">
+    <div class="panel-bar">
+      <div class="panel-heading">
+        <div class="panel-title">Settings</div>
+        <div class="panel-date">For every screen that shows this dashboard</div>
+      </div>
+      <div class="panel-side">
+        <button type="button" class="close-button" id="settings-done"><span>Done</span></button>
+      </div>
+    </div>
+    <div class="panel-note hidden" id="settings-note"></div>
+    <div class="content" id="settings-content"></div>
+  </div>
+
+  <div class="sheet-backdrop hidden" id="sheet">
+    <div class="sheet">
+      <div class="sheet-head">
+        <span class="sheet-swatch"><span class="swatch" id="sheet-swatch"></span></span>
+        <div class="sheet-titles">
+          <div class="sheet-title" id="sheet-title"></div>
+          <div class="sheet-sub" id="sheet-sub"></div>
+        </div>
+        <button type="button" class="close-button" id="sheet-done"><span>Done</span></button>
+      </div>
+      <div class="sheet-note hidden" id="sheet-note"></div>
+      <div class="sheet-body" id="sheet-body"></div>
+    </div>
   </div>
 
   <script src="app.js"></script>
